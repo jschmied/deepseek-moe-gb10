@@ -51,3 +51,29 @@ is the right space now.
 Also worth weighing: two issues, no reply, no PRs on the repo at all. A third issue may not land
 either. A **pull request** — or simply running their own `test_spec_lossless.py` and reporting
 whether it passes — may carry further than more analysis.
+
+---
+
+## Resolved 2026-09-12: merged into issue #3
+
+**Deletion was not available** — our `viewerPermission` on that repo is `READ`, and GitHub requires
+admin/maintain to delete an issue. As author we can only close. So: opened the merged issue first,
+then closed #1 and #2 with a comment pointing at it.
+
+- **#3 OPEN** — "Consolidating #1 and #2: a quality-gate blind spot, the spec-lossless gate, and
+  corrected storage numbers" → https://github.com/0xBakeer/deepseek-v41-flash-spark/issues/3
+- **#1 CLOSED** (not planned) → comment 5645143760
+- **#2 CLOSED** (not planned) → comment 5645144000
+
+Repo state re-read immediately before posting: HEAD `8b68fdde1`, pushed 2026-09-12 08:36
+("Prefill: device slot table for the chunked path"). Still no owner reply on anything.
+
+**What #3 leads with**, deliberately changed from the storage framing of #1/#2: the free-generation
+gate cannot catch fluent-wrong output, with our Marathi-for-Hindi case as the evidence (7 words,
+distinct-token ratio 1.0, zero repeated lines — passes every heuristic in it), and the prediction
+that non-Latin-script experts are the next casualty of the same corpus-coverage mechanism that
+pruned the markup experts. Then the temp-0 warning about `test_spec_lossless.py`, the two methods for
+the `Model.forward` gap, the 1.83× restart spread against their N=1, and finally the storage results
+scoped down to load-time/streaming with #1's cost model corrected in the open.
+
+Everything attributed to our model (Qwen3.8-Flash-Next NVFP4 under vLLM), never asserted about theirs.
