@@ -2,10 +2,16 @@
 
 ## Live
 
-- **Survey the current DeepSeek open-weights landscape** (started 2026-09-12, running as a subagent).
-  Newest models incl. any V4.x, expert geometry from each `config.json` rather than blog copy,
-  quantized community releases that fit 128 GB, vLLM support status for the newest architectures,
-  and any published DeepSeek-specific expert-compression work. Results land in `notes/the-field.md`.
+- ~~Survey the DeepSeek open-weights landscape~~ **DONE 2026-09-12** → `notes/the-field.md`.
+
+## Next, and it is cheap
+
+- **Test vllm PR #56509 on this box.** V4.1-Flash cannot start on SM120/SM121 (issue #56461: SWA
+  cache hardcoded `block_size=32` vs FlashInfer SM120 sparse-MLA page-64 only). The fix PR is **open
+  and explicitly hardware-untested** — its author is "relying on CI and upstream review for SM120
+  validation". We have a GB10. **The 475 GiB size blocker does not apply**: #56461 was reproduced
+  with `--load-format dummy`, so the startup path is testable without weights. Cost is a venv clone
+  and a few minutes. Report to the PR needs the user's go.
 
 ## Queued
 
