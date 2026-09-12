@@ -107,3 +107,60 @@ helps if the per-expert remainder is cheap, and the remainder here is ~95 % of a
   build actually uses and which do not assume low rank.
 
 Posted to 0xBakeer/deepseek-v41-flash-spark issue #3 on 2026-09-12: https://github.com/0xBakeer/deepseek-v41-flash-spark/issues/3#issuecomment-5646328174
+
+---
+
+# ds-01 (2026-09-12) — idea 3 does NOT apply to V4.1: there are no hash-routed layers
+
+The user's idea 3 proposed a non-uniform layer budget (layers 0–2 at 100 %, the rest ~39.6 %) on the
+grounds that "the first hash-routed layers map token IDs directly to experts, so calibration
+frequency is inherently biased", and asked to verify that this transfers to V4.1 **first**. It does
+not. Checked against the real checkpoint, not the V4 tooling's description.
+
+| evidence | result |
+|---|---|
+| `text_config` routing keys | `topk_method = noaux_tc`, `scoring_func = sqrtsoftplus`, top-6 of 384 + 1 shared |
+| hash-ish tensors in the 48-shard index (`hash\|bucket\|token2expert\|expert_map`) | **0** |
+| layers with a learned `ffn.gate.weight` `[384, 5120]` BF16 | **40 of 40** |
+| dense layers with no router | **none** |
+
+Layers 0, 1 and 2 each carry an ordinary learned router. The hash-routed early layers belong to the
+*other* V4 checkpoint (256 experts/layer) that the third-party REAP adapter targets — the same
+checkpoint the user already warned not to transfer absolute results from. **So the non-uniform budget
+has no justification here and idea 3 should be dropped for V4.1**, before any implementation.
+
+## But the underlying worry has a real V4.1 analogue — and it is small
+
+Every router carries **two** biases: `ffn.gate.bias` and `ffn.gate.bias_vl` (both `[384]` f32, all 40
+layers). A second, vision-language routing correction. A text-only calibration trace never exercises
+it, which is exactly the user's concern — a token population absent from the corpus getting no
+evidence — arriving through a different mechanism.
+
+Ranking experts by the bias **alone** looks alarming: `corr(bias, bias_vl) = −0.30`, top-6 overlap
+0/6. **That reading is wrong and I nearly shipped it.** A constant offset cancels in top-k, and these
+biases are mostly constant offset (mean +9.83 vs +21.21) with tiny spread. Against the actual router
+logits:
+
+| | spread | vs logit std 2.97 |
+|---|---|---|
+| `bias` | 0.0359 | 1.2 % |
+| `bias_vl` | 0.0994 | 3.3 % |
+
+Selecting top-6 with one bias versus the other, over 512 random unit-RMS directions: **mean overlap
+5.75/6, identical for 75.6 % of tokens, never worse than 4/6.** So the VL path moves ~4 % of expert
+slots and touches one token in four. Real, measurable, and **not** a basis for a 100 %-resident early
+layer budget.
+
+**Assumption stated:** random directions, not real hidden states, so this bounds the scale rather
+than simulating routing. Feeding real token embeddings through the layer-0 router would sharpen it.
+
+## Architecture facts recovered while doing this (all from the checkpoint)
+
+40 layers, all MoE. `n_routed_experts 384`, `num_experts_per_tok 6`, `n_shared_experts 1`,
+`norm_topk_prob true`, `routed_scaling_factor 1.5`. DSpark: `dspark_target_layer_ids [37,38,39]`,
+`n_routed_experts 128`, `num_experts_per_tok 3`, `markov_rank 256`, `block_size 5`,
+`num_nextn_predict_layers 3`. CSA2: `index_source_layer_ids [2,8,14,20,24,28,32,36]`,
+`kv_source_layer_ids [2,8,14,20]`, `index_topk 512`, `candidate_topk_blocks 2048`,
+`sliding_window 128`; `compress_ratios` starts `[0,0,2,2,…]`, so layers 0–1 are uncompressed and
+**layer 2 is the first indexed layer** — which is why shard 5 carries the indexer weights and
+layers 0/1/3 do not. `num_experts_per_tok 6` is the "expert #6" of idea 7.
