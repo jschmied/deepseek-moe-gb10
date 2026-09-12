@@ -57,3 +57,53 @@ here. That removes one candidate before they spend time on it.
 `layers.0.ffn.experts.{e}.` from it — **6.88 GiB**, verified against the HF API, not 475.3 GiB.
 Downloading at a 6 MB/s cap. That gives their own test on real layer-0 experts, and a
 random-vs-real control on the numbers above.
+
+---
+
+# Tier 1 — the same checks on real layer-0 experts (2026-09-12)
+
+One shard, `model-00003-of-00048.safetensors`, **6.88 GiB**, sha256 verified against HF's `lfs.oid`
+(`e1281f85…d4c9`) — not a size check, which aria2 preallocation makes meaningless. Ran the repo's
+**own** `tools/test_fp4_moe.py` unmodified with `MODEL_DIR` pointed at it, 32 expert slots.
+
+## 1. It passes, and it validates the random-weight harness
+
+| T | Tier 0 (random) | Tier 1 (real weights) |
+|---|---|---|
+| 1 | 2.82e-03 | **4.35e-03** |
+| 6 / 8 | 2.90e-03 | **4.33e-03** |
+| 64 | 4.41e-03 | **4.46e-03** |
+| 512 | — | **4.99e-03** |
+
+Same order of magnitude throughout, real weights ~1.5× higher at small T and converging by T=64.
+**So the no-download harness is a fair proxy** — which matters, because it means future kernel work
+here does not need the checkpoint. Chunk invariance and run-to-run bit-identity: **PASS** on real
+weights too, confirming Tier 0.
+
+## 2. We independently reproduce their expert-bandwidth figure
+
+| T | distinct experts | pipelined | GB/s | their "% of 273" |
+|---|---|---|---|---|
+| 1 | 6 | 0.671 ms | 168.2 | 61.6 % |
+| 6 | 30 | 2.911 ms | **193.7** | 71.0 % |
+| 64 | 32 | 3.324 ms | 181.0 | 66.3 % |
+| 512 | 32 | 9.290 ms | 64.8 | 23.7 % |
+
+The user's brief quotes the CB3 kernels at **~186 GB/s**. We measure **168–194 GB/s** for FP4 in the
+same regime on a second GB10. That is independent corroboration of the number their "near the
+bandwidth floor" conclusion rests on.
+
+## 3. …and their headroom is smaller than their own metric suggests
+
+Their `% peak` column divides by **273 GB/s**, the theoretical figure. Our own `bwprobe.py` measures
+this box at **212.8–215.0 GB/s achievable** on decode-shaped reads. Against achievable rather than
+theoretical, the T=6/30-expert row is **~90 %**, not 71 %.
+
+That *strengthens* their argument rather than weakening it: the expert kernel is nearer the floor
+than they claim, so conventional kernel tuning has even less to give than they think. Caveat: bwprobe
+is a GEMV read pattern and this is gathered expert weights, so treat ~215 as indicative, not as the
+same measurement.
+
+**The T=512 row is worth their attention** — 64.8 GB/s, 23.7 %. At that batch the kernel is presumably
+compute-bound rather than bandwidth-bound, in which case GB/s is the wrong axis and the column reads
+as a regression when it may not be one. Worth labelling, not worth alarm.
