@@ -1,4 +1,5 @@
-DRAFT — needs the user's go. 0xBakeer/deepseek-v41-flash-spark, comment on issue #3 (2026-09-12).
+POSTED 2026-09-12 — 0xBakeer/deepseek-v41-flash-spark, comment on issue #3 (user go: "post comment to #3").
+→ https://github.com/0xBakeer/deepseek-v41-flash-spark/issues/3#issuecomment-5646328174
 
 **Shared-base + low-rank delta expert compression does not pay on an already-4-bit checkpoint.**
 Measuring it before building it, in case anyone here is tempted by the D²-MoE / MoE-SVD headlines.

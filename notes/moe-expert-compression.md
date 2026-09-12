@@ -105,3 +105,5 @@ helps if the per-expert remainder is cheap, and the remainder here is ~95 % of a
   not be typical, though 48 matrices agreeing this tightly is not a marginal signal.
 - Says nothing about **pruning or merging** (REAP, REAM), which are what every sub-128 GB DeepSeek
   build actually uses and which do not assume low rank.
+
+Posted to 0xBakeer/deepseek-v41-flash-spark issue #3 on 2026-09-12: https://github.com/0xBakeer/deepseek-v41-flash-spark/issues/3#issuecomment-5646328174

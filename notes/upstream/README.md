@@ -18,3 +18,19 @@ Engine path verified before claiming: `v41_engine.py:370` → `moe_forward_v3` +
 → https://github.com/0xBakeer/deepseek-v41-flash-spark/pull/4
 
 Repo is **public** (60 stars, 6 forks, MIT) — not private, which is why the risk framing matters.
+
+### 0xBakeer/deepseek-v41-flash-spark issue #3, 2026-09-12 15:5x CEST (user go "post comment to #3")
+
+Comment on the consolidated issue, not a new thread — the repo has had no owner reply on anything we
+have filed, so a fourth item would have been noise. **Shared-base + low-rank delta expert compression
+does not pay on an already-4-bit checkpoint**, measured on V4.1's own layer-0 `w1` (sha256-verified
+shard) plus Qwen L24 `down_proj` for shape contrast. Deltas need 92–96 % of full rank: within 1–2
+ranks of W itself, within 2–37 of noise.
+
+Stated the trap explicitly: the Qwen row's 616 < 640 "pass" is an artefact — random scores 618, also
+under break-even — so on 4:1 experts clearing break-even measures the shape, not the weights. Our own
+first verdict line printed USABLE for it; the random control caught it.
+
+Limits stated: one box, layer 0 only, 16 experts per arm, bf16 SVD, break-even specific to shared-V
+bf16 factors. Draft: `notes/upstream/delta-spectrum-0xbakeer.md`.
+→ https://github.com/0xBakeer/deepseek-v41-flash-spark/issues/3#issuecomment-5646328174
