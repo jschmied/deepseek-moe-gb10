@@ -126,3 +126,96 @@ prefill memory management, and FP8/MXFP4 kernels. Anything whose benefit comes f
 model across boxes does not transfer and should not be logged as an option for us.
 
 Add to the watch list: tonyd2wild, MiaAI-Lab (we already watch #19/#23), magicbear, rhys101.
+
+## Transplant survey of the four non-Bakeer repos (2026-09-12)
+
+All figures below are **as reported by those repos**, read from their trees; we have verified none of
+them on our box. Marked TRANSPLANTABLE only where the benefit does not come from splitting the model
+across Sparks.
+
+### Ranked candidates for a single Spark
+
+1. **`b12x` MXFP8/FP4 kernels for small-M dense projections — the biggest measured win anywhere.**
+   `MiaAI-Lab/adapter/mxfp8_b12x.py` + `README.md:194,204-208`: ~230 dense FP8 projections per step at
+   M=6 go **52 ms (Triton) → 50 (FlashInfer CUTLASS SM120) → 17 ms (b12x warp-level MMA)**; her total
+   step 118 → 82 ms, largest single contributor. Cause: the checkpoint uses 32×32 `ue8m0` block
+   scales and CUTLASS pads M 6→128. Pure kernel selection, **zero TP content**.
+   `local-inference-lab/b12x` is a live SM120/121 CuTe-DSL library (213★, pushed today) whose
+   `AGENTS.md` states the contract we have been measuring by hand: *"W4A16 means BF16 activations with
+   inline FP4/NVFP4 weight dequantization."* Relevant to us **independent of V4.1**.
+
+2. **The GB10 hidden slow state — see the separate entry below. Highest expected value for us.**
+
+3. **`row_store.cpp` + `cudaLaunchHostFunc`: host-side IO *inside* a CUDA graph.**
+   `MiaAI-Lab/adapter/row_store.cpp` (byte-identical in rhys101), 429 lines of C, no CUDA in the hot
+   path. Packed 264 B rows (FP8 weight + E8M0 scale adjacent), 4096 B header, row 0 page-aligned ⇒ one
+   `pread` per miss. Queue depth sized from a measured GB10 NVMe curve (**~3.5k IOPS at QD1 → ~112k at
+   QD64**) ⇒ 96 IO threads; `kChunk = 1` deliberately, to keep in-flight reads high. Costs ~1–3 ms per
+   decode step for both Engram layers against an ~82 ms step. rhys101 shows it bit-exact across 12
+   changing-input graph replays. **This is the general answer to "graph capture vs a host lookup" and
+   applies to any offloaded table — our PLE included.**
+
+4. **`top_k_per_row_decode` beats `persistent_topk` on GB10, with numbers.**
+   `tonyd2wild/patch/sm12x-indexer-topk/RESULTS.md`: exact index-set match vs `torch.topk` at widths
+   600–300,000 and **1.6–3.6× faster in every cell** (6 rows @ 4,096: 96.1 → 59.8 µs; 48 rows @
+   65,536: 810.6 → 337.7 µs). Structural cause: wants **128 KB smem, GB10 has 99 KB**, and it
+   oversubscribes 48 SMs above ~48 CTAs/row. **This is our ground** — det-217 measured the same
+   101,376 B optin ceiling from the other direction, and det-222/224 were a shared-memory budget bug
+   in exactly this kernel family.
+
+5. **`--speculative-dspark-align-verify-tokens-to-graph-tier`: free verify tokens.**
+   `MiaAI-Lab/boot.py:321-323` — *"Fills each step's verify window up to the cuda-graph tier the
+   forward is padded to anyway: free verification at the same cost."* Engine-agnostic idea. **Every
+   one of the four leaves DSpark's ragged-verify scheduler off or inert** — rhys101's headline 82.73
+   tok/s run has `speculative_dspark_sps_table_path: null`, and Tony disables adaptive verification
+   deliberately (padded speculative batches can hang SM120 sparse MLA, FlashInfer #5015, open).
+
+**Runners-up:** `prefill_empty_cache.py` (chunked prefill reserves memory ~quadratically because the
+caching allocator cannot serve a slightly larger next chunk from a smaller cached block — 8 GiB
+reserved with nothing live after 64 chunks; verbatim transplantable); the `force_deep_gemm_metadata`
+one-liner for ratio-1/2 indexers on SM120; and a unified-memory weight-loading deadlock on GB10
+(`cudaMemcpyAsync` on mmap-backed CPU weights stuck in `pthread_rwlock_wrlock`; 778 s → 576 s).
+
+**Explicitly NOT transplantable:** rhys101's PR #36655 "native H8/H16 decode" backport buys nothing at
+TP1 (with all 64 heads local the native path *is* the padded-64 path), and Mia's NCCL-buffer work
+(4.7 GiB → 139 MB pinned) is purely multi-node.
+
+### Two independent confirmations of our own findings
+
+- **Fused MoE finalize.** `MiaAI-Lab/README.md:249-256` ships `SGLANG_FLASHINFER_MOE_FUSED_FINALIZE=0`
+  for atomic bf16 adds in the fused finalize, autotuner-selected for one bucket, ~1 nat of first-token
+  logprob drift, ~0.3 ms/step to disable. That is **our PR #54948 finding reached independently on a
+  different engine.**
+- **FlashInfer autotune workspace OOM at high `gpu-memory-utilization`.** magicbear had to drop 0.80 →
+  0.65 on vLLM or the driver returned `NV_ERR_NO_MEMORY`. Matches our
+  `flashinfer-jit-oom-after-driver-upgrade` memory.
+
+### Where the field contradicts 0xBakeer
+
+He names none of the four repos. Beyond the slow state, he appears unaware of the b12x dense-GEMM
+route, the in-graph `cudaLaunchHostFunc` Engram lookup, and the measured top-k timings (he knows the
+128 KB vs 99 KB *constraint*, `docs/gotchas.md:124-131`, but has no numbers). Two direct conflicts:
+
+- **O_DIRECT for Engram rows.** `gotchas.md:74-79` says do not — "48 random 264-byte reads per token,
+  O_DIRECT on those is all overhead" — and uses buffered `preadv` + a small row cache. Mia/rhys101 do
+  exactly that, but on a **repacked page-aligned shard** where each row is one aligned read. Different
+  premises, reconcilable; on unified memory his buffered reads cost page cache that *is* GPU memory.
+- **Engram row cache.** He keeps one; Mia sets `DSV41_CACHE_GIB=0` (~0 % reuse) and rhys101 refuses to
+  boot with a cache configured, with telemetry showing **0 hits / 31,582 misses**.
+
+### Corrections to our own landscape table
+
+- **MiaAI-Lab is a 3-Spark repo.** `README.md:136-137`: every published measurement is TP3; the TP4
+  profile is config-validated only, never booted. Do not cite Mia numbers as 4-Spark.
+- **magicbear's content is the most rigorous kernel A/B of the four** despite 1★ — it refuses to
+  attribute a prose regression to the kernel because acceptance moved (2.08–3.92 prose vs 5.5–5.88
+  counting). Judge it on content, not reach.
+- **rhys101 is a spin-off** of `rhys101/…-vLLM-DGX-Spark-8`, and its 82.73/52.62 figures are
+  well-documented (n=5, sd 0.179) with prompt bytes SHA-256-pinned identical to Tony's. Its
+  **prefill** advantage over Tony's vLLM on identical prompts is arguably the bigger result —
+  2,245–3,032 vs 902–1,539 tok/s — and given our `agentic-speed-is-ttft-bound` finding, that is the
+  half that would matter to us.
+- **Acceptance is dominated by prompt content, not configuration**: 3.55–3.89 across three independent
+  4-Spark fleets, ~3.0 on Bakeer's single box, but 5.5–5.88 counting vs 2.08–3.92 prose within one
+  run. **No cross-repo tok/s comparison is meaningful unless matched on prompt** — the same lesson as
+  our `acceptance-is-not-quality`.
