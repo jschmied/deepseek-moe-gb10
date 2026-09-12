@@ -1,0 +1,22 @@
+/tmp/claude-1000/-home-jschmied-git-dgx-spark-setup-guide/24a6e32a-d571-4261-96e4-1463dea3f47a/scratchpad/dsv41/tools/v41_ref.py:144: UserWarning: No PYTORCH_KERNEL_CACHE_PATH or HOME environment variable set! This disables kernel caching. (Triggered internally at /__w/pytorch/pytorch/aten/src/ATen/native/cuda/jit_utils.cpp:1488.)
+  return torch.exp2(b.to(torch.float32) - 127.0)
+
+  DeepSeek-V4.1 layer-0 w1  (2304, 5120), 16 experts, max rank 2304
+                            rank@95%  rank@99%
+    delta (W - base)            1745      2121
+    W itself (control)          1741      2119
+    random (floor)              1830      2158
+    break-even rank vs the 4-bit bytes we already pay: 1280
+    -> delta@99% is 2121 vs break-even 1280: **NO SAVING**
+
+  Qwen Flash-Next L24 down_proj  (2560, 640), 16 experts, max rank 640
+                            rank@95%  rank@99%
+    delta (W - base)             544       616
+    W itself (control)           543       615
+    random (floor)               551       618
+    break-even rank vs the 4-bit bytes we already pay: 640
+    -> delta@99% is 616 vs break-even 640: **USABLE**
+
+  Any arm where the delta beats break-even? YES
+  NO on both closes the shared-base/delta direction offline, before any kernel work.
+== ALL DONE ==
