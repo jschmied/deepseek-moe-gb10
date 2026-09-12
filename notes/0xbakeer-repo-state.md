@@ -72,3 +72,79 @@ probe work — a metric that does not run the real path cannot catch a defect in
 The newest commit is orthogonal: xgrammar-constrained DSML tool calls, off by default pending
 real-weight verification. The repo correctly separates that formatting problem from the numerical
 router bug.
+
+---
+
+# UPDATE 2026-09-12 — the repo moved seven commits past `4871b93` (HEAD `8b68fdd`)
+
+A file-level survey found the tree has advanced, and **three items above are superseded**. Keeping
+the original section as the record of what we believed, with the corrections here.
+
+## Superseded
+
+1. **The CB3 3-bit default was withdrawn** (`96915a7`, `RESULTS.md` §3.6). It scored *better*
+   teacher-forced and then emitted `<!DOCTYPE><!DOCTYPE><!DOCTYPE>`. Root cause (`e28d0d7`): the
+   keep-set was ranked on a **50-document corpus containing no HTML/JS/CSS/SQL**, so markup experts
+   never fired, ranked cold, and were pruned.
+   *This is our own lesson in someone else's repo.* A calibration corpus decides what survives, and a
+   teacher-forced metric cannot see what it never asked the model to generate — the same shape as our
+   Thai/Devanagari probe work and `acceptance-is-not-quality`.
+2. **The acceptance gate changed.** No longer +0.015 nats teacher-forced; it is now a
+   **free-generation gate** — 900–2,000 tokens, distinct-token ratio > 0.25, line-repeat < 30 %,
+   plus structural checks. The user's "correctness baseline before speed" instinct is what the repo
+   independently concluded.
+3. **A clean post-fix benchmark now exists** (`RESULTS.md` §4.3, v0.4.0-wip), for very nearly the
+   config the brief specified: `PRUNE_KEEP=0.44`, `EXPERT_FORMAT=cb3`, `ARENA_GB=98`, union trace,
+   `DSV41_DENSE_FP4=attn,wo_a`, `DSV41_HEAD_FMT=fp8`, `DSV41_FUSED_ATTN=0`. 44.1 % resident, hit rate
+   1.0, **no NVMe during decode**: **36.6 tok/s (HTML) → 17.1 (prose)**, 18.6 thinking-on; prefill
+   337 tok/s on 5,014 tokens. `env.example` on main now ships these defaults.
+
+Note the keep fraction moved 0.40 → **0.44** and the arena 90.5 → **98 GB** — presumably the
+markup-expert repair.
+
+## What it is, and the one fact that decides everything
+
+**A standalone engine, not a vLLM fork.** ~7.4k lines of pure Python plus Triton JIT kernels, **no
+C++/CUDA, no build step**, MIT. torch 2.13.0+cu130, Triton as shipped with it. `sm_121a` is required
+because `tools/fp4_moe.py` emits `cvt.rn.f16x2.e2m1x2`.
+
+**It bypasses vLLM entirely** — no import, no dependency, its own attention, indexer, KV cache and
+speculative loop. **So vLLM #56461 (SWA `block_size=32` vs page-64-only FlashInfer SM120 sparse-MLA)
+does not apply**, and neither does waiting on the untested fix PR #56509. That is the strongest
+argument for building on this rather than on vLLM for V4.1.
+
+## The blocker that is ours, not theirs: disk
+
+Needs `deepseek-ai/DeepSeek-V4.1-Flash` at **510 GB** across 48 shards, on **≥600 GB local NVMe** —
+O_DIRECT, so no NFS and no overlayfs. **We have 101 GB free.** The full path is not open to us today.
+
+**But there is a partial-checkpoint path**, and it is the actionable finding: `Weights(..., n_layers=NL,
+load_mtp=False)` (`engine/model.py:79`), used by `engine/test_layers.py` to run a 4-layer smoke test
+"on the shards present", with `tools/engram_rows.py` fetching only the corpus's Engram rows over HTTP
+range requests. **~4 layer shards + embeddings + tokenizer + `inference/` ≈ 50 GB** exercises the
+model math and chunk-invariance without the 510 GB. It is not advertised as a supported mode. At
+101 GB free that fits — and it is the only version of this that fits.
+
+## Things to know before trusting any number in it
+
+- **Every figure is N=1**, one box, one day, no repeats.
+- Nothing is bit-exact against DeepSeek's own tilelang reference — only against **this repo's own
+  torch port**.
+- `LIMITATIONS.md` still concedes the graphed decode path **"is not numerically equal to
+  `Model.forward` … differs by a few percent relative and is not yet explained"** — post-fix.
+- **`test_spec_lossless.py` exists but no passing run of it is recorded anywhere** in `RESULTS.md`.
+  The gate the user correctly identified as the right one has not been shown to pass.
+- The whole v0.4.0 quality story rests on a **5-prompt heuristic gate**, not a benchmark suite.
+- Housekeeping smells: dead `self.gate_bf16` / `self.mtp_gate_bf16` still allocated and read nowhere
+  (`fastdecode.py:144-145`) — the removed BF16 router's corpse; and three disagreeing version strings
+  (`VERSION` 0.1.0-wip, `CITATION.cff` 0.2.0-wip, `CHANGELOG` 0.3.0-wip).
+- Container image **has never been built or run**, self-declared.
+
+## Confirmed at source (still true)
+
+Router is FP32 — `fastdecode.py:325`, `scores = F.softplus(R.mm(y.float(), self.W.layers[L].gate_w)).sqrt()`,
+drafter likewise at `:380`. Fused attention off — `fastdecode.py:51`, `DSV41_FUSED_ATTN` defaults `"0"`.
+Adaptive DSpark genuinely absent: `conf_proj` is loaded (`model.py:178`) and reported, but adaptive
+verification is off at `model.py:711`. **The open lever is real.**
+
+Repo state: two issues, **both ours**, both open, no owner reply; zero PRs.
