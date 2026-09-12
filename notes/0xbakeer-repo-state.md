@@ -148,3 +148,27 @@ Adaptive DSpark genuinely absent: `conf_proj` is loaded (`model.py:178`) and rep
 verification is off at `model.py:711`. **The open lever is real.**
 
 Repo state: two issues, **both ours**, both open, no owner reply; zero PRs.
+
+## Our fork and local clone (2026-09-12)
+
+| | |
+|---|---|
+| fork | `jschmied/deepseek-v41-flash-spark` — **created automatically by `gh` at 11:27 when PR #4 was opened**, not by hand |
+| local clone | `~/git/deepseek-v41-flash-spark` (14 MB; their `results/*/trace/*.npz` are gitignored, so a clone is small) |
+| remotes | `origin` = our fork, `upstream` = `0xBakeer/deepseek-v41-flash-spark` |
+| branches | `main` (in sync at `8b68fdde188f`), `test/cb3-chunk-invariance` (open PR #4) |
+
+Workflow for further contributions there:
+
+```bash
+cd ~/git/deepseek-v41-flash-spark
+git fetch upstream && git merge --ff-only upstream/main      # or the merge-upstream API
+git switch -c <topic> && ...                                 # then push to origin, PR to upstream
+```
+
+**Keep `main` fast-forwarded before sharing any `compare/main...branch` link** — otherwise the compare
+lists every upstream commit as well (upstream-post skill).
+
+Note the scratch clone used for the ds-02 coverage analysis was a separate `--depth 1` copy of
+*upstream*; `notes/data/0xbakeer-coverage-8b68fdd.json` is the pinned artifact from it, so that result
+does not depend on either clone surviving.
