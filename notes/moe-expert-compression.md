@@ -164,3 +164,73 @@ than simulating routing. Feeding real token embeddings through the layer-0 route
 `sliding_window 128`; `compress_ratios` starts `[0,0,2,2,…]`, so layers 0–1 are uncompressed and
 **layer 2 is the first indexed layer** — which is why shard 5 carries the indexer weights and
 layers 0/1/3 do not. `num_experts_per_tok 6` is the "expert #6" of idea 7.
+
+---
+
+# ds-02 (2026-09-12) — the unmasked-coverage measurement: idea 1 lands in the "SSD dominates" branch
+
+The user's step (1): *"replay the current generation suite with the pruning mask disabled and ask:
+what percentage of distinct expert accesses fall outside today's 44 % union set? If it is 1–3 %, this
+design could be extremely good. If it is 10–15 %, SSD traffic will still dominate."*
+
+**Computable offline from the checkout — no GPU, no download.** `results/trace-union/stats/coverage.json`
+commits per-layer `counts_coding` / `counts_general` / `counts` (40 layers × 384). The keep-set was
+rebuilt exactly as `engine/v41_engine.py:484-504` does it (normalised `sum` rank, `build_keep_masks`
+`uniform`, top-169 per layer) and scored against the union access histogram.
+
+| measurement | value |
+|---|---|
+| **access-weighted miss, in-sample** | **16.92 %** |
+| distinct (layer,expert) pairs outside the keep-set | 55.56 % (8,451 / 15,211) |
+| per-layer miss | 12.21 % – 25.11 % (median 16.53 %) |
+| keep-set from *coding* → *general* accesses | **43.78 %** miss |
+| keep-set from *general* → *coding* accesses | **52.24 %** miss |
+
+**16.9 % is above the user's own 10–15 % "SSD traffic will still dominate" line — and it is the
+best case**, measured on the very corpus the keep-set was built from. Out-of-domain is 44–52 %.
+
+In traffic terms: 6 experts × 40 layers = 240 slots/token, 16.9 % cold ⇒ **~40.6 cold experts per
+decoded token**; at ~14.8 MB per CB3 expert that is **~0.59 GB/token**, a ceiling of **5.1 / 8.5 /
+11.9 tok/s** at 3 / 5 / 7 GB/s against today's 17–37. Upper bound: it ignores temporal reuse and the
+existing LRU/transient ring, but the gap to 1–3 % is too large for reuse to close.
+
+**Why the repo's "expert hit rate 1.0" does not contradict this.** In the shipped path the router is
+masked — `engine/model.py:488-490` does `logits.masked_fill(~pm[L], -inf)` — so it *cannot* select a
+non-resident expert. Hit rate 1.0 is true by construction. 16.9 % is the counterfactual the user
+asked for: what the **unmasked** router would have chosen.
+
+## The corollary that matters for idea 2
+
+**Frequency ranking already minimises access-miss.** Keeping the top-k by count is, by construction,
+the residency set that minimises access-weighted misses for a given k. So REAP saliency cannot reduce
+SSD traffic below frequency — at equal residency it will be **equal or worse** on miss rate, because
+it deliberately keeps some rarely-selected-but-high-contribution experts.
+
+That means **ideas 1 and 2 pull in opposite directions**: idea 1 wants the residency set that
+minimises cold traffic (= frequency), idea 2 wants the set that maximises quality per slot
+(= saliency). They can be combined, but the trade must be stated, not assumed away. Idea 2 remains
+worth testing on its own terms — it is a *quality at fixed residency* claim, not a traffic claim, and
+the repo has never tried a non-frequency criterion (`NOTES.md:793` rejects a routing-mass objective).
+
+## What this strengthens instead: idea 5
+
+The cross-domain figures (43.78 % / 52.24 %) are direct evidence for the user's own framing that
+"each profile works on its domain and breaks the other". A union over both is a poor compromise
+rather than a superset. A **request-specific overlay** chosen from the prefill routing histogram
+attacks exactly that, and the residency sweep shows how much headroom a better-targeted set has:
+
+| resident | in-sample miss |
+|---|---|
+| 30 % (115) | 28.81 % |
+| 40 % (154) | 19.79 % |
+| **44 % (169)** | **16.92 %** |
+| 50 % (192) | 13.06 % |
+| 60 % (230) | 7.94 % |
+| 75 % (288) | 2.79 % |
+
+Reaching the 1–3 % band by residency alone needs ~75 %, i.e. ~167 GB of arena against today's 98 GB.
+
+**Limits.** The union trace is 190 sequences / 36,250 tokens — small, and the only trace committed
+(the raw `.npz` are gitignored, `.gitignore:21-22`). Access-weighted miss is the right metric for
+traffic; the distinct-pair figure (55.6 %) is reported separately because "distinct expert accesses"
+is ambiguous in the brief. Nothing here was run on the model.
