@@ -30,19 +30,34 @@
 
 ## Queued research (no box time, no downloads)
 
-- **Decide the shared-base + delta question cheaply**: SVD spectrum of `W_expert − W_base` on a few
-  layers. If the deltas are not strongly low-rank at these shapes it closes offline. Note we now know
-  V4.1 experts are **already fp4** and the architecture **already has a shared expert** (384+1), so
-  two of the three legs of the original argument are weaker than assumed
-  (`notes/moe-expert-compression.md`).
+- ~~**Decide the shared-base + delta question cheaply**~~ — **CLOSED 2026-09-12.** Deltas need 92–96 %
+  of full rank on both DS V4.1 L0 and Qwen L24: within 1–2 ranks of `W` itself, within 2–37 of noise.
+  The Qwen row's apparent pass was a shape artefact the random control caught. See
+  `notes/moe-expert-compression.md`; posted to 0xBakeer #3.
+
 - **Establish the binding constraint** before optimising expert bandwidth. On Flash-Next 69 % of
   single-stream decode was BF16 GEMV on unquantized *dense* weights; compressing experts there would
-  have fixed the wrong thing.
+  have fixed the wrong thing. Still open, still no box time.
+
+- **NEW, and the best-leveraged thing we hold: the CSA2 indexer on layer 2.** Shard 5 carries
+  `layers.2.attn.indexer.{wk,k_norm,weights_proj}` and `layers.2.attn.compressor.wgate` — the real
+  sparse-attention weights, on disk and checksum-verified. Layers 0/1/3 have no indexer. This is the
+  same machinery as Qwen's QSA, where we have det-207…229 and two upstream threads. No download.
 
 ## Blocked on the user
 
-- **Tier 2**, ~50 GB partial checkpoint (4 layers + embeddings + tokenizer) for per-layer route
-  agreement against `Model.forward`. Queued in qnext as `dsv41-tier2`, `needs_user: true`.
+- **Nothing for Tier 2 any more — that entry was wrong.** It said ~50 GB had to be downloaded. The
+  seven verified shards already *are* the partial checkpoint: **layers 0, 1, 2, 3 complete** (384
+  experts each, routers `ffn.gate.{weight,bias,bias_vl}`, attention), plus embeddings (shard 2),
+  `head`+`norm` (shard 43) and the vision tower (shard 1). `config.json`, the index and both
+  tokenizer files were fetched 2026-09-12 (a few MB). Per-layer route agreement is runnable now.
+  Note `dsv41-tier2` was never actually in the qnext queue despite this file claiming it was.
+
+- **Engram: a whole-shard fetch is impossible, and that is now measured.** The engram tensors are not
+  missing from layers 1/14 — they live in **shards 47 and 48**, `94.56 GiB each, 189.13 GiB total`,
+  against **85 GB free**. So `engram_rows.py`'s HTTP-range approach is not an optimisation, it is the
+  only option. Config: `engram_vocab_size 16,000,000`, `num_embeddings [384006168, 384016682]`,
+  `n_heads 8`, `head_dim 256`, `max_ngram_size 4`, compressed vocab 99,092.
 
 ## Standing cautions
 
