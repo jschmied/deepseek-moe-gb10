@@ -1,6 +1,6 @@
 # Expert residency: what the routing traces actually say
 
-Findings ds-03…ds-07, 2026-09-13. All simulated offline against **real routing traces**, held out,
+Findings ds-03…ds-12, 2026-09-13. All simulated offline against **real routing traces**, held out,
 before any engine work. Method per the user: capture the access pattern with the router **unmasked**,
 then price strategies in simulation and only then build.
 
@@ -119,19 +119,100 @@ costs six O_DIRECT round trips"), pinned aligned staging, two thread pools.
 
 * **Overread is negligible**: ≤4095 B per run edge × 2 runs ≈ **8 KB on 14.45 MB = 0.06 %**, and
   expert sizes are exact page multiples (14,454,784 = 3529×4096; 18,800,640 = 4590×4096).
-* **Not optimal**: decode achieves **2.5 GB/s against 5.5 GB/s at depth** (45 %); prefill 3.8 (69 %).
-  Their `experts.py:77` names the cause — "a decode step misses only about one expert per layer, so
-  nothing else is in flight". With `read_chunk_mb=4` an expert splits into ~4 chunks, so effective
-  depth is ~4 where the device wants 8+. Independent GB10 data: **~3.5k IOPS at QD1 vs ~112k at
-  QD64**, a 32× spread.
+* **Not optimal**: decode achieves **2.5 GB/s** against a device that gives 5.6 single-threaded;
+  prefill 3.8. Their `experts.py:77` names the cause — "a decode step misses only about one expert
+  per layer, so nothing else is in flight".
 * **Channel change will not help.** `libcufile.so` is installed and loads, but **`nvidia_fs` is not
-  loaded**, so GPUDirect Storage would fall back to a host bounce — what they already do. And on
-  unified memory that bounce is ~2 % of the cost: staging→slot runs at the box's **273 GB/s** against
-  5.5 GB/s from NVMe. GDS solves a PCIe-crossing problem this box does not have.
+  loaded**, so GPUDirect Storage would fall back to a host bounce — what they already do. GDS solves
+  a PCIe-crossing problem this box does not have.
+
+> **CORRECTED 2026-09-13** — two claims in this finding were wrong, both from numbers quoted without
+> re-measuring. (a) The staging→slot bounce is **not** "2 % of the cost at 273 GB/s": a pinned H2D
+> copy runs at **59.4 GB/s**, so at 852 MB of misses per step it is ~14 ms, not noise. (b) The
+> `read_chunk_mb=4` reasoning was backwards. Chunking does not raise effective queue depth, because
+> a thread issues its chunks **serially**; measured, 4 MiB chunks cost **41 % at one expert in flight
+> and 14 % at two** against reading the whole expert in one `pread`, and **two in flight already
+> reach the device ceiling** of ~6.8 GB/s. The lever is a *larger* read, not more of them.
+> Full measurements: [gb10-arena-io-measured.md](gb10-arena-io-measured.md).
 
 **Interaction worth noting:** ds-06's adaptive design needs 25–32 loads/token across 48 layers —
 *more* concurrency than today's ~1 miss/layer. Higher miss rates are *better* for the device given
 the QD curve, so the residency policy and the I/O ceiling push the same way.
+
+---
+
+## ds-09 — the arena SPLIT is the lever, not the keep-set's contents
+
+`tools/prefill_warm_sim.py`, leave-one-out over the long trace (6 requests, prefill 888–4,445
+tokens). Every arm has the **same total capacity**; only the static/dynamic split and the static
+core's contents differ. LRU on the dynamic slots throughout.
+
+Coverage %, mean over the held-out requests:
+
+| arena | dyn share | global core | pure LRU (no core) | oracle core |
+|---|---|---|---|---|
+| 44 % | 5 %  | 88.8 | 91.4 | 97.1 |
+| 44 % | 10 % | 90.4 | 91.4 | 96.8 |
+| 44 % | 25 % | **92.1** | 91.4 | 95.9 |
+| 44 % | 50 % | **92.4** | 91.4 | 94.4 |
+| 44 % | 100 % | 91.4 | 91.4 | 91.4 |
+| 20 % | 5 %  | 53.8 | **78.8** | 81.1 |
+| 20 % | 10 % | 62.2 | **78.8** | 82.2 |
+| 20 % | 25 % | 69.4 | **78.8** | 82.1 |
+| 20 % | 50 % | 74.1 | **78.8** | 81.0 |
+| 20 % | 100 % | 78.8 | 78.8 | 78.8 |
+
+Two things fall out, and they point opposite ways depending on how tight the arena is.
+
+* **At a roomy 44 % the split has an interior optimum at 25–50 % dynamic** (92.1–92.4 %), worth
+  **+1.7…+2.0 pp over a 10 % transient allowance** and +3.6 over 5 %. 0xBakeer ships
+  `TRANSIENT_SLOTS=8`, well inside the losing region. This is a constant, not a redesign.
+* **At a tight 20 % the static core is actively harmful.** Pure LRU over the whole arena scores
+  78.8 % against the frozen core's 53.8–74.1 % — **+4.7 to +25 pp** — and no split recovers it. The
+  frozen keep-set only earns its slots when there is enough capacity that the globally-hot experts
+  really are this request's hot experts too.
+
+DS4.1 at its 98 GB arena sits at 44 % of experts, but that figure is a memory artefact on a steep
+curve (ds-04); anything that squeezes the arena moves it toward the regime where the keep-set is a
+liability. Ship the split as a runtime knob, not a compile-time constant.
+
+## ds-10 — warming the cache from the request's own prefill: real, small, and not worth it
+
+The idea was free domain adaptation: rank the initial arena on the routing observed during *this*
+request's prefill, which is known before a single token is decoded and is drawn from exactly the
+domain the decode will be in.
+
+It works, and it is too small to build:
+
+| trace | prefill tokens | arena / dyn | global | prefill-warmed | delta |
+|---|---|---|---|---|---|
+| long | 888–4,445 | 44 % / 10 % | 90.4 | 91.2 | **+0.8 pp** |
+| long | 888–4,445 | 20 % / 5 %  | 53.8 | 58.5 | **+4.7 pp** |
+| short | 22–53    | 44 % / 10 % | 85.6 | 84.0 | **−1.7 pp** |
+
+And it needs a lot of prompt to pay. Truncating the window at cap 20 %/dyn 5 %, where the effect is
+largest: 64 tokens **−0.9 pp**, 256 tokens +0.7, 1,024 tokens +4.7, all tokens +4.7. So the whole
+effect arrives between 256 and 1,024 prompt tokens, and short prompts are actively worse off.
+
+The decisive comparison is not against `global` though — it is against **doing nothing but enlarging
+the dynamic fraction**, which is free. Pure LRU beats prefill-warming at 20 % (78.8 vs 58.5) and
+matches it at 44 % (91.4 vs 91.2). **Closed: prefill-warming is dominated by ds-09 at every point
+measured.** Blending prefill and global ranks (25/50/75 %) was also tested and lands between the
+two parents every time — no interaction to exploit.
+
+## ds-11 — where the remaining headroom actually is
+
+The oracle arm ranks the static core on the held-out request's own **decode** histogram — knowledge
+no serving system has. It brackets what any smarter *initialisation* could ever win:
+
+* At 44 % / 5 % dynamic: **97.1 %** against the best real arm's 92.4 — **~5 pp of headroom**.
+* At 20 %: 81.1 % against pure LRU's 78.8 — **~2 pp**.
+
+So under memory pressure adaptivity has already collected nearly everything on the table, and
+further work on *which experts to hold* is worth about two points. With a roomy arena there are five
+points left, and they are only reachable by **predicting** the decode distribution — which is the
+drafter-driven-prefetch question, not a cache-policy question. That is the honest case for spending
+effort there, and it is much smaller than the ~20 points ds-06 already banked.
 
 ---
 
@@ -141,11 +222,16 @@ the QD curve, so the residency policy and the I/O ceiling push the same way.
    single effect measured, ~20 points.
 2. **Do not tune per-layer allocation** (ds-05) or the eviction policy (ds-07). Both are ~1 point.
 3. **Do not treat 44 % as a design point** (ds-04) — it is a memory artefact on a steep curve.
-4. **Attack queue depth, not the read path** (ds-08): batch several layers' misses, or speculatively
-   fetch the DSpark block's likely experts. Read coalescing and alignment are already right.
+4. **Stop splitting the expert read** (ds-08 as corrected): `read_chunk_mb=4` costs 41 % at the
+   concurrency decode actually runs at. Then batch a layer's misses — the target is only two in
+   flight, which is where the device already saturates. Coalescing and alignment are already right.
 5. The prompt overlay (ds-03) still helps at the worst case, but **a plain LRU of equal size beats it
    outright**, so the sticky-session variant is the version worth keeping — adaptivity is the active
    ingredient, not prompt-derived prediction.
+
+6. **Ship the static/dynamic split as a knob** (ds-09) and **do not build prefill-warming**
+   (ds-10); the remaining initialisation headroom is ~2 pp under pressure, ~5 pp with a roomy arena
+   (ds-11), and only prediction can reach it.
 
 **Everything above is unvalidated on DS4.1.** The next step is a trace from
 `tools/expert_trace.py` with `prune_keep` unset — it streams one 7.4 GB layer shard at a time, needs

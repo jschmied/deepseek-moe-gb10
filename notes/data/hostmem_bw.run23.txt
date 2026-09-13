@@ -1,0 +1,14 @@
+=== run 2 ===
+  cudaMalloc (device)        stream read    240.7 GB/s   (35.7 ms/pass over 8.0 GiB)
+  cudaMalloc (device)        expert gather  283.0 GB/s   (640 x 13.79 MB, 32.69 ms)
+  cudaHostAlloc (pinned host) stream read    214.2 GB/s   (40.1 ms/pass over 8.0 GiB)
+  cudaHostAlloc (pinned host) expert gather  228.3 GB/s   (640 x 13.79 MB, 40.52 ms)
+  cudaMallocManaged          stream read    161.3 GB/s   (53.2 ms/pass over 8.0 GiB)
+  cudaMallocManaged          expert gather  187.7 GB/s   (640 x 13.79 MB, 49.29 ms)
+=== run 3 ===
+  cudaMalloc (device)        stream read    240.0 GB/s   (35.8 ms/pass over 8.0 GiB)
+  cudaMalloc (device)        expert gather  281.4 GB/s   (640 x 13.79 MB, 32.87 ms)
+  cudaHostAlloc (pinned host) stream read    212.2 GB/s   (40.5 ms/pass over 8.0 GiB)
+  cudaHostAlloc (pinned host) expert gather  228.5 GB/s   (640 x 13.79 MB, 40.49 ms)
+  cudaMallocManaged          stream read    160.7 GB/s   (53.4 ms/pass over 8.0 GiB)
+  cudaMallocManaged          expert gather  187.9 GB/s   (640 x 13.79 MB, 49.22 ms)

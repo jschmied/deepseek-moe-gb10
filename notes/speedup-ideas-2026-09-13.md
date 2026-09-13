@@ -14,7 +14,7 @@ Provenance convention adopted from the memory/IO survey and applied throughout:
 
 | what | we believed | **[measured today]** |
 |---|---|---|
-| NVMe large sequential O_DIRECT | 5.5 GB/s, "queue depth is the whole game" | **6.9 GB/s**, saturated at 4 threads × 4 MB, and **4.42 GB/s from ONE thread** |
+| NVMe large sequential O_DIRECT | 5.5 GB/s, "queue depth is the whole game" | **6.9 GB/s** at 4 threads × 4 MB, **4.42 GB/s** from one thread. *Refined 2026-09-13 on the real shards at the engine's own shape:* one expert in flight gives **3.97 GB/s in 4 MiB chunks but 5.58 in one `pread`**, and two in flight reach **6.82** either way — so the read size matters more than the depth |
 | the QD curve | 3.5k IOPS @ QD1 → 112k @ QD64 | that is the **4 KB** curve. Large reads self-generate ~115 in-flight commands per expert (`max_hw_sectors_kb = 128`), so **QD is not the story for expert reads** |
 | pinned host→device copy | "a memcpy at ~273 GB/s" | **59.4 GB/s**, flat across 1/2/4/8 streams; in-pool D2D is 241 GB/s r+w |
 | pageable H2D | — | **6.2 GB/s at 14–64 MB, 1.3 at 512 MB — below the NVMe.** NVIDIA confirms this as a DGX Spark defect |
@@ -44,8 +44,9 @@ and device idle, not transfer. The SSD is not the bottleneck; the schedule is.**
 | 3 | **`num_speculative_tokens_per_batch_size`** e.g. `[[1,2,2],[3,16,0]]` — our `cg.txt` shows MTP collapsing 18.9→10.7 tok/s at c=4 because MambaManager charges spec blocks per request | none in the k=0 band | 2 h |
 | 4 | **Right-size the KV pool** — 30.99–33.47 GiB ≈ 967k tokens against a 262k max context. On this box the marginal GiB is worth more as absence of memory pressure. **Do NOT quantize KV**: our FP8-KV result (×1.72 pool, no speed), an independent GB10 q4_0 result (−37% decode at 110k), and vLLM's own Spark guidance all agree | none | hours |
 | 5 | **`CUBLASLT_WORKSPACE_SIZE=131072`** — 338 calls of an *Ampere* WMMA kernel (5.0% of a 30k prefill) are being selected on a Blackwell part, a classic too-small-workspace symptom | bit-exact if it only reselects | 30 min |
-| 6 | **Host-pinned arena kernel test** — allocate one tensor `cudaMalloc` vs `cudaHostAlloc`, time a Triton MoE kernel over each. Decides whether a zero-copy NVMe→SM arena is possible at all | n/a | 30 min |
-| 7 | **Suffix-drafting oracle**, CPU only — replay real agent trajectories against `SuffixDecodingCache` and get the acceptance curve for a *free* drafter before building anything | n/a | 1 d |
+| 6 | ~~**Host-pinned arena kernel test**~~ — **DONE 2026-09-13, and it changed the answer twice over.** An SM reads a `cudaHostAlloc` arena at **228–230 GB/s**, 81% of device memory's 281, not the ~59 GB/s that was predicted; and `O_DIRECT` into it is free while `cudaMalloc` returns `EFAULT`. But the bandwidth arithmetic then makes the zero-copy arena **near-neutral** (−4.4 ms of 318/step) and a *loss* above 95.2% coverage. See [gb10-arena-io-measured.md](gb10-arena-io-measured.md) | n/a | done |
+| 7 | **STOP CHUNKING THE EXPERT READ** — measured today, not in the original survey. `read_chunk_mb=4` costs **+41% at one expert in flight and +14% at two** against one `pread` for the whole expert; a thread issues its chunks serially, so chunking lowers throughput rather than raising queue depth. Two experts in flight already hit the ~6.8 GB/s device ceiling. One constant | bit-exact | 30 min |
+| 8 | **Suffix-drafting oracle**, CPU only — replay real agent trajectories against `SuffixDecodingCache` and get the acceptance curve for a *free* drafter before building anything | n/a | 1 d |
 
 ## The biggest single lever, and it is bit-exact
 
@@ -93,17 +94,19 @@ Bit-exact, in order of value:
   env A/B, and if it moves anything at all that *proves* the semaphore rather than the device was the
   limit; (b) stop holding the staging lease across the H2D + `stream.synchronize()` — hand the buffer to
   a completion thread so the read pool never waits on a CUDA stream; (c) `preadv`+`O_DIRECT` straight
-  into a `cudaHostAlloc` arena, deleting the upload entirely; (d) issue a whole verify block's misses
+  into a `cudaHostAlloc` arena, deleting the upload entirely — **measured, viable, but near-neutral**;
+  (d) issue a whole verify block's misses
   for a layer as one batch — the engine already sees 20.96 distinct experts/layer, so the union is
   naturally wide, it just is not in flight together. Takes the full-quality unpruned path from 2.68
   toward **10–16 tok/s**, against the pruned config's 23.5.
-- **Adaptive LRU warmed by the prompt's own routing.** The LRU itself is worth ~20 coverage points at
-  the same capacity [stored, ds-06]. The new part is seeding the arena from the routing observed during
-  *this request's* prefill rather than a global trace: coding and general top-25% sets overlap at a
-  Jaccard of only 0.18–0.31, and prefill sees hundreds to thousands of tokens of exactly this request's
-  domain, at 337–2,300 tok/s, before a single token is decoded. Free domain adaptation, paid out of a
-  phase that is compute-bound. 271 MB/token of NVMe reads at ~93% coverage vs 360–460 for the frozen
-  set. **The deciding simulation is runnable today** — the traces are local and it needs no GPU.
+- ~~**Adaptive LRU warmed by the prompt's own routing.**~~ **Simulated 2026-09-13 (ds-09…ds-11), and
+  the prefill-warming half is closed.** It is real but small — +0.8 pp at a roomy arena, +4.7 pp at a
+  tight one, **−1.7 pp on short prompts** — and it needs 256–1,024 prompt tokens before it pays at all.
+  Crucially it is *dominated by doing nothing but enlarging the dynamic fraction*, which is free. What
+  survives, and is bigger: **the static/dynamic split is the lever**. At a roomy 44% arena the optimum
+  is 25–50% dynamic, worth +1.7…2.0 pp over the 10% transient allowance 0xBakeer ships; at a tight 20%
+  arena a **plain LRU with no static core beats the frozen keep-set by +4.7 to +25 pp**. Ship the split
+  as a runtime knob.
 - **Prefetch n-gram rows the moment token ids exist.** 48 rows × 264 B per token, addressed by token id
   alone; a verify block's addresses are known the instant the drafter emits. 288 random 264-B reads is
   4.7 ms at the device's 61.5k IOPS, against a stored 58.9 ms step of which 48.5 ms is the Engram wait —

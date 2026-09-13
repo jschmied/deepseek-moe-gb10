@@ -1,0 +1,12 @@
+device NVIDIA GB10  SMs 48  canMapHostMemory 1  unifiedAddressing 1  pageableAccess 1
+arena 8 GiB  expert 13.79 MB
+
+  cudaMalloc (device)        stream read    240.7 GB/s   (35.7 ms/pass over 8.0 GiB)
+  cudaMalloc (device)        expert gather  281.6 GB/s   (640 x 13.79 MB, 32.85 ms)
+  host ptr 0xe1e9e0000000 -> device ptr 0xe1e9e0000000  (same, UVA)
+  cudaHostAlloc (pinned host) stream read    214.7 GB/s   (40.0 ms/pass over 8.0 GiB)
+  cudaHostAlloc (pinned host) expert gather  230.0 GB/s   (640 x 13.79 MB, 40.21 ms)
+  cudaMallocManaged          stream read    161.4 GB/s   (53.2 ms/pass over 8.0 GiB)
+  cudaMallocManaged          expert gather  187.7 GB/s   (640 x 13.79 MB, 49.28 ms)
+
+== ALL DONE ==
