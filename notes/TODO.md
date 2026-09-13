@@ -64,3 +64,26 @@
 - Published compression ratios are against FP16. V4.1 is already fp4.
 - `notes/method.md`: name the differing cell, void conditions before the run, ranges not means,
   record what went the wrong way.
+
+## Residency simulations — done 2026-09-13 (see notes/expert-residency-simulations.md)
+
+ds-03..ds-08 on real Qwen routing traces, held out, before any engine work:
+
+- **Drop the frozen keep-set.** Adaptive LRU of the SAME size beats it by ~20 points (93.4-94.8 % vs
+  73.1-86.8 %). The static core contributes nothing at any mix. Their `TRANSIENT_SLOTS=8` is ~2
+  orders of magnitude too small to register.
+- **Do not tune per-layer allocation** (~1 point, reproduces their `global ≈ uniform`) or the
+  **eviction policy** (LRU ties Belady — capacity is the variable, not policy).
+- **44 % is a memory artefact**, not a design point: the coverage curve has no knee there.
+- **I/O: overread is 0.06 %, reads are already coalesced 6→2, alignment is right.** The gap is queue
+  depth (2.5 of 5.5 GB/s; ~1 miss per layer in flight). GPUDirect will not help — `nvidia_fs` is not
+  loaded and the host bounce is ~2 % on unified memory.
+- The prompt overlay helps at the worst case (+18.5 pp short / +6.2 pp long) but loses to a plain
+  LRU of equal size, so **adaptivity is the active ingredient**, not prompt-derived prediction.
+
+**Caveat on all of it: measured on Qwen (512/top-10/48L), not DS4.1 (384/top-6/40L).** Directions
+transfer, levels do not.
+
+**Next:** trace DS4.1 unmasked with `tools/expert_trace.py` (`prune_keep` unset). It streams one
+7.4 GB layer shard at a time — needs neither the 510 GB resident nor the 189 GB engram shards, and
+resumes as shards land — then re-run `tools/*_sim.py` against it.
