@@ -128,11 +128,13 @@ costs six O_DIRECT round trips"), pinned aligned staging, two thread pools.
 
 > **CORRECTED 2026-09-13** — two claims in this finding were wrong, both from numbers quoted without
 > re-measuring. (a) The staging→slot bounce is **not** "2 % of the cost at 273 GB/s": a pinned H2D
-> copy runs at **59.4 GB/s**, so at 852 MB of misses per step it is ~14 ms, not noise. (b) The
-> `read_chunk_mb=4` reasoning was backwards. Chunking does not raise effective queue depth, because
-> a thread issues its chunks **serially**; measured, 4 MiB chunks cost **41 % at one expert in flight
-> and 14 % at two** against reading the whole expert in one `pread`, and **two in flight already
-> reach the device ceiling** of ~6.8 GB/s. The lever is a *larger* read, not more of them.
+> copy runs at **59.4 GB/s**, so at 852 MB of misses per step it is ~14 ms, not noise. (b) The claim I first
+> put here — that `read_chunk_mb=4` costs 41 % because chunks go out serially — is **withdrawn**:
+> `experts.py:219` submits all but the first chunk to a second thread pool, so this engine's chunks
+> *are* parallel and ds-08's original reasoning stands. The 41 % is what serial chunking costs in my
+> own harness, not what the engine pays. What does hold, and is useful, is the shape of the ceiling:
+> **one expert read gives 5.6 GB/s and two concurrent reads give 6.8**, so batching a layer's misses
+> needs a queue depth of 2, not 8.
 > Full measurements: [gb10-arena-io-measured.md](gb10-arena-io-measured.md).
 
 **Interaction worth noting:** ds-06's adaptive design needs 25–32 loads/token across 48 layers —
@@ -165,16 +167,31 @@ Coverage %, mean over the held-out requests:
 Two things fall out, and they point opposite ways depending on how tight the arena is.
 
 * **At a roomy 44 % the split has an interior optimum at 25–50 % dynamic** (92.1–92.4 %), worth
-  **+1.7…+2.0 pp over a 10 % transient allowance** and +3.6 over 5 %. 0xBakeer ships
-  `TRANSIENT_SLOTS=8`, well inside the losing region. This is a constant, not a redesign.
+  **+1.0 pp over an all-dynamic pool** and +3.6 over 5 %. This is a constant, not a redesign.
+
+> **CORRECTED, same day.** The first version of this bullet said 0xBakeer's `TRANSIENT_SLOTS=8`
+> sits "well inside the losing region". That reads their design backwards, and conflates two
+> different mechanisms. In `engine/experts.py` the arena is `lru_slots = n_slots - transient_slots`
+> where **the LRU is the adaptive part** and the transient ring only absorbs *prefill* misses so a
+> long prompt cannot evict the decode working set. `TRANSIENT_SLOTS=8` therefore means ~100 %
+> dynamic — the all-dynamic end of this sweep, not the frozen end. Read correctly, the sweep says
+> their unpruned residency would gain ~1 pp by *reserving* a static core, not by enlarging the
+> dynamic pool. Separately, their **shipped** config (`PRUNE_KEEP=0.44 EXPERT_FORMAT=cb3
+> ARENA_GB=98`) is "pruned, all-resident": the router is *masked* per layer to the top 44 % and
+> exactly those are warm-started, so decode never touches NVMe and no residency policy is active at
+> all. ds-06's "frozen keep-set" is that **pruning** mask — a quality lever — not a cache.
 * **At a tight 20 % the static core is actively harmful.** Pure LRU over the whole arena scores
   78.8 % against the frozen core's 53.8–74.1 % — **+4.7 to +25 pp** — and no split recovers it. The
   frozen keep-set only earns its slots when there is enough capacity that the globally-hot experts
   really are this request's hot experts too.
 
-DS4.1 at its 98 GB arena sits at 44 % of experts, but that figure is a memory artefact on a steep
-curve (ds-04); anything that squeezes the arena moves it toward the regime where the keep-set is a
-liability. Ship the split as a runtime knob, not a compile-time constant.
+One more correction while measuring the real checkpoint: **44 % is a CB3 number, not an FP4 one.**
+`EXPERT_BYTES = 3 × (2304×2560 + 2304×160) = 18,800,640` (engine/experts.py:46), which the shard
+headers confirm — six tensors per expert, 17.93 MiB of payload. A 98 GB arena is therefore **5,213
+FP4 slots = 34 %** of the 15,360 (layer, expert) pairs, and only ~6,780 = 44 % in the CB3 packing
+that the `<!DOCTYPE>` degeneration pulled back from. The operating point to design for is the 20–34 %
+column of the table above, not the 44 % one — which is the column where a static core is a liability.
+Ship the split as a runtime knob, not a compile-time constant.
 
 ## ds-10 — warming the cache from the request's own prefill: real, small, and not worth it
 

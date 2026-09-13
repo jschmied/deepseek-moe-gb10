@@ -52,14 +52,22 @@ Same expert read, varying only the chunk the engine splits it into. Three reps:
 | 8 MiB | 4.85 / 4.97 / 5.28 → 5.03 | 6.77 / 6.85 / 6.77 → 6.80 | 6.63–6.77 |
 | **whole expert, one `pread`** | 5.48 / 5.65 / 5.61 → **5.58** | 6.80 / 6.83 / 6.83 → **6.82** | 6.58–6.69 |
 
-A decode step misses ~0.5–1.6 experts per layer, so the engine lives at **T=1–2**, exactly where the
-chunking hurts: **+41 % at T=1 and +14 % at T=2 from simply not splitting the read.** By T=4
-everything converges to ~6.7 GB/s, which is why a pure "queue depth" framing missed this — the loss
-only exists at low concurrency, and low concurrency is the case that matters.
+> **WITHDRAWN AS A STATEMENT ABOUT THE ENGINE, same day.** I read the numbers above as "`read_chunk_mb=4`
+> costs 41 % at decode concurrency" and wrote that into the survey and into ds-08. It does not describe
+> 0xBakeer's engine. My harness issues an expert's chunks **serially inside one thread**;
+> `engine/experts.py:219` submits every chunk but the first to a second pool
+> (`futs = [self.read_pool.submit(_pread_chunk, *j) for j in jobs[1:]]`), so chunking there *raises*
+> queue depth exactly as their docstring claims. What the table actually measures is the cost of
+> serial chunking, which is a real effect and a real trap, but not one this engine falls into.
+>
+> The faithful test — the engine's own `ExpertReader._read_leased` over the real two-run layout, at
+> `DSV41_READ_CHUNK_MB` ∈ {2,4,8,32} × `DSV41_IO_THREADS` ∈ {1,2,4,12} — is `tools/expert_read_bench.py`
+> and runs once the routing trace finishes using the box. Until then there is **no measured
+> recommendation on chunk size**, and the "stop chunking" item in the survey is suspended.
 
-Two consequences. First, this is a **one-constant change**, not a redesign. Second, it lowers the bar
-for batching a layer's misses: **two experts in flight already reach the device ceiling** (6.82 of
-~6.8 GB/s), so that work needs to buy a queue depth of 2, not 8.
+What does survive from the table, because it is independent of who issues the reads: a single expert
+read is worth **5.6 GB/s** and two concurrent reads reach **6.8 GB/s**, the device ceiling. So
+batching a layer's misses only has to buy a queue depth of **2**, not 8.
 
 ## 4. So should the arena be host-pinned? Marginally, and it stops paying as the cache improves
 
@@ -82,8 +90,9 @@ cheaper and it keeps the faster arena.
 
 * Idea 2c (`O_DIRECT` straight into a `cudaHostAlloc` arena) is **viable but near-neutral**, not the
   large win it was ranked as, and not the dead end the kernel test was expected to prove.
-* A new item outranks most of the list: **stop chunking expert reads**, +41 % on the read term at
-  decode concurrency, one constant.
+* The "stop chunking expert reads" item is **suspended**: the effect is real for serial chunking but
+  this engine issues chunks in parallel, so it needs the faithful re-run before it is a
+  recommendation.
 * Ideas 2b (drop the staging lease) and 2d (batch a layer's misses) get *cheaper* — the target queue
   depth is 2.
 * GPUDirect Storage stays dead, now for a reason measured here rather than quoted: device memory
