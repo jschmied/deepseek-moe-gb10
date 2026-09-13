@@ -72,9 +72,12 @@
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
    "note": "acceptance vs verify width. Offline says width is free on bytes AND on the kernel; acceptance is the only thing left that can make it not free.",
    "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
-   "state": "running",
+   "state": "void",
    "started": "2026-09-13 21:16:41",
-   "log": "/home/jschmied/ds41-queue/logs/sweep-block-width.log"
+   "log": "/home/jschmied/ds41-queue/logs/sweep-block-width.log",
+   "finished": "2026-09-13 21:39:39",
+   "rc": 0,
+   "minutes": 23.0
   },
   {
    "name": "step-breakdown",
@@ -84,12 +87,12 @@
    ],
    "needs_user": false,
    "prereqs": [
-    "sweep-block-width"
+    "sweep-cb3-prefill"
    ],
    "expect_min": 15,
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
    "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
-   "note": "where the step actually goes, from the engine's own timers -- attn_s, moe_s, kernel_s, route_s, load_wait_s, lease_s, h2d_s, nvme_read_s, engram_s. Two plans in a row have been ranked on 0xBakeer's stored 63-of-117 ms split, which is an all-resident config; ours is 68% idle. No profiler needed, the counters are already exported."
+   "note": "where the step actually goes, from the engine's own timers -- attn_s, moe_s, kernel_s, route_s, load_wait_s, lease_s, h2d_s, nvme_read_s, engram_s. Two plans in a row have been ranked on 0xBakeer's stored 63-of-117 ms split, which is an all-resident config; ours is 68% idle. No profiler needed, the counters are already exported. (unblocked: sweep-block-width voided on two engine crashes at non-default widths, finding recorded in section 9)"
   },
   {
    "name": "prefill-reuse-probe",
