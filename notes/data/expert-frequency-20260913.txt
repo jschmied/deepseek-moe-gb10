@@ -1,0 +1,28 @@
+  57 requests, 40 layers, 384 experts, 3,183,360 routing decisions (decode only)
+  uniform would be 207 per (layer, expert)
+
+  share of routing captured by the top N experts OF EACH LAYER (mean over 40 layers):
+      N  % of E    mean  min layer  max layer
+     32    8.3%   44.6%      28.0%      54.8%
+     64   16.7%   61.4%      44.0%      69.9%
+     96   25.0%   72.0%      56.4%      78.6%
+    128   33.3%   79.6%      66.3%      85.2%
+    154   40.1%   84.4%      73.2%      89.0%
+    169   44.0%   86.7%      76.7%      90.7%
+    192   50.0%   89.9%      81.6%      93.1%
+    256   66.7%   96.1%      92.4%      97.6%
+    320   83.3%   99.2%      98.3%      99.7%
+
+  per-layer entropy: 6.94-8.04 bits of 8.58 (uniform); mean 7.43
+  hottest expert / median expert, per layer: 9.0x - 95.5x, median 45.8x
+
+  coding vs general, top-25% sets per layer:
+    Jaccard 0.067-0.185, mean 0.117
+
+  sorted frequency, layer 20 (log2 count, 384 experts left to right):
+      0- 95 |@@@@@%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%#########################################********************|
+     96-191 |*********************************************+++++++++++++++++++++++++++++++++++++++++++++++++++|
+    192-287 |+++++++++++++++++++++++++++++++++++++++=======================================================--|
+    288-383 |---------------------------------:::::::::::::::::::::................                          |
+    scale: '@' = 3,249 uses, ' ' = 0
+== ALL DONE ==
