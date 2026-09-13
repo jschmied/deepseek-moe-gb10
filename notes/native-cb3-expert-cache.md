@@ -98,3 +98,60 @@ only bytes.
 
 Related: [[ds41-measured-2026-09-13]] §1 (0.582 GB/token), §3 (the read path is not the bottleneck),
 §6c (CB2's measured wall ratio 0.801).
+
+---
+
+## Scale survey: done, all 40 layers, and 3 bits is exactly lossless
+
+`tools/scale_survey.py`, 2026-09-13. Reads **only** the scale region of each layer shard — one
+contiguous ~425 MB span near the front — straight off the backup server with a remote `dd`, so it
+never copies a 7.4 GB shard and never needs the checkpoint local. 40 layers, 384 experts each,
+**149,422,080 rows**, 17.0 GB read, ~4 minutes.
+
+| | |
+|---|---|
+| distinct exponent values per layer | 6–11 |
+| order-0 entropy | 0.975–1.031 bits/byte |
+| worst intra-row range, any layer | **7** |
+| rows with range ≤ 7 | **100.000000 %** |
+| rows with range ≤ 3 | 99.7965 % (layer 39) – 100.0000 % |
+
+**A 1-byte row base plus 3 bits per group is exactly lossless on every row of every layer. No escape
+path is needed.** The 3-layer sample generalised; layer 39 is the worst case and it still fits. Note
+2 bits does *not* — ≤3 fails on 0.2 % of layer 39's rows — so 3 is the width, not 2.
+
+### The record, frozen
+
+Per expert: w1 and w3 are 2304 rows × 160 groups → 1 + 60 = 61 B/row; w2 is 5120 × 72 → 1 + 27 = 28.
+Scales go **1,105,920 → 424,448 B**, saving 681,472.
+
+```text
+record  = [w1 CB3 | s1 3-bit][w3 CB3 | s3 3-bit][w2 CB3 | s2 3-bit]  = 13,773,312 B
+padded to 4096                                                        = 13,774,848 B  (1,536 B pad)
+record i at offset i * 13,774,848,   i = layer*384 + expert,   no index
+```
+
+| | per-expert bytes | vs FP4 | full cache | slots at a 98 GB arena |
+|---|---|---|---|---|
+| FP4 checkpoint (today) | 18,800,640 | 1.000 | 288.8 GB | — |
+| CB3, 8-bit scales | 14,454,784 | 0.769 | 222.0 GB | 6,779 = 44.1 % |
+| **CB3, 3-bit scales** | **13,774,848** | **0.733** | **211.6 GB** | **7,114 = 46.3 %** |
+
+So the disk cache saves **26.7 % per miss**, not 23.1 %, and the whole thing is 211.6 GB.
+
+### Two separable wins, and only one of them is cheap
+
+* **Disk record only.** Store 3-bit scales in the cache, expand to 8-bit while writing into the
+  arena. The kernel is untouched. This is what the cache needs, it is bit-exact, and the expansion
+  replaces the FP4→CB3 conversion that a miss pays today — strictly less work, not more.
+* **Arena too.** Compressing the scales *in memory* is the +2.2 pp coverage and −4.7 % kernel-bytes
+  item, but the CB3 kernel reads `s1/s2/s3` directly, so it needs a decode in the inner loop. Given
+  §6b — the kernel is occupancy-limited, not byte-limited, below ~38 experts in flight — that one
+  should be measured before it is built, and it is no longer obviously free.
+
+### Disk arithmetic, updated
+
+On-box with a CB3 cache and the FP4 experts deleted: 211.6 + 203 (Engram) + 19 (dense) = **434 GB**,
+against 511 GB today, leaving ~130 GB free on this disk. The encode streams one layer shard at a time
+from the backup server, so peak local footprint during the build is ~227 GB — the full 510 GB
+checkpoint never has to be here at all. Read cost ~48 minutes of LAN plus GPU conversion.
