@@ -21,8 +21,11 @@ Two further traps this exposed, both worth knowing before reading any of these n
 import json, urllib.request
 
 BASE = "http://127.0.0.1:8001/v1/chat/completions"
-KEYS = ["attn_s", "moe_s", "kernel_s", "route_s", "load_wait_s", "lease_s", "h2d_s",
-        "nvme_read_s", "engram_s", "engram_read_s", "resolve_s"]
+# decode_only carries the RAW counter names (ZERO_STATS), not the exported aliases:
+# load_wait_s is load_s there, nvme_read_s is read_s. Asking for the aliases silently
+# dropped the two biggest I/O terms from the first decode-only run.
+KEYS = ["attn_s", "moe_s", "route_s", "load_s", "lease_s", "h2d_s",
+        "read_s", "engram_s", "resolve_s"]
 
 
 def run(prompt, n):
