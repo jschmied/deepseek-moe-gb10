@@ -134,3 +134,28 @@ five-prompt generation gate unchanged. It says the model is not degenerating; it
 component is contributing. The NaN probe above is one narrow instrument against that class; a
 feature-ablation check (zero the Engram rows, confirm the output *does* change) is the general one,
 and is not yet written.
+
+### Engram ablation: it does reach the forward — 3/5 prompts change
+
+`DSV41_ENGRAM_ABLATE=1` (new, off by default) zeroes every Engram row instead of filling it from the
+table. Same greedy prompts, `temperature 0`, compared by sha256:
+
+| prompt | Engram on | ablated | |
+|---|---|---|---|
+| code (fibonacci) | cc23ad426ee7 | e284fde847f0 | **CHANGED** |
+| prose (why is the sky blue) | cf1d4d86ea8c | 46dfba8e62a4 | **CHANGED** |
+| quote ("it was the best of times, it was…") | 38d141b35057 | 59d0e16e9b00 | **CHANGED** |
+| fact (first eight primes) | 95ecdf842cb7 | 95ecdf842cb7 | identical |
+| recall (capital of Burkina Faso) | e2e85e456d60 | e2e85e456d60 | identical |
+
+**The rows are reaching the forward and they matter**, so the blind spot is closed for this build:
+our quality results did cover Engram.
+
+The split is the interesting part and it is the right shape for an n-gram memory. The **quote**
+completes cleanly with Engram — *"it was the worst of times."* — and **runs on** without it
+(*"…it was the worst of times, it was "*), which is verbatim continuation, exactly what the table is
+for. The two that did not move are **parametric recall** (a capital city, the first eight primes),
+which lives in the weights and has no reason to need an n-gram lookup.
+
+Worth keeping as a standing check rather than a one-off: it is cheap, and it is the only instrument
+we have against a component being silently disabled by a refactor.
