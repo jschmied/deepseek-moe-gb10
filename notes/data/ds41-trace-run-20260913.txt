@@ -1,0 +1,198 @@
+11:55:03 --- layer 1 ---
+11:55:06 corpus: 95 sequences, 17704 tokens
+11:55:06 resumed after layer 0 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer0.pt
+11:56:43 layer 1: 17704 tokens, 378/384 experts touched, 96.7s
+11:56:44 disk: 527G free
+11:56:44 --- layer 2 ---
+11:56:46 corpus: 95 sequences, 17704 tokens
+11:56:46 resumed after layer 1 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer1.pt
+11:57:41 layer 2: 17704 tokens, 377/384 experts touched, 55.1s
+11:57:42 disk: 528G free
+11:57:42 --- layer 3 ---
+11:57:45 corpus: 95 sequences, 17704 tokens
+11:57:45 resumed after layer 2 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer2.pt
+11:58:50 layer 3: 17704 tokens, 382/384 experts touched, 65.3s
+11:58:51 disk: 528G free
+11:58:51 --- layer 4 ---
+11:58:54 corpus: 95 sequences, 17704 tokens
+11:58:54 resumed after layer 3 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer3.pt
+11:59:57 layer 4: 17704 tokens, 383/384 experts touched, 62.6s
+11:59:57 disk: 529G free
+12:03:33 --- layer 5 ---
+12:03:36 corpus: 95 sequences, 17704 tokens
+12:03:36 resumed after layer 4 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer4.pt
+12:04:40 layer 5: 17704 tokens, 383/384 experts touched, 64.2s
+12:04:41 disk: 522G free
+12:04:41 --- layer 6 ---
+12:04:45 corpus: 95 sequences, 17704 tokens
+12:04:45 resumed after layer 5 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer5.pt
+12:05:47 layer 6: 17704 tokens, 382/384 experts touched, 62.3s
+12:05:48 disk: 522G free
+12:05:48 --- layer 7 ---
+12:05:51 corpus: 95 sequences, 17704 tokens
+12:05:51 resumed after layer 6 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer6.pt
+12:06:55 layer 7: 17704 tokens, 383/384 experts touched, 64.4s
+12:06:57 disk: 522G free
+12:06:57 --- layer 8 ---
+12:06:59 corpus: 95 sequences, 17704 tokens
+12:06:59 resumed after layer 7 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer7.pt
+12:07:52 layer 8: 17704 tokens, 382/384 experts touched, 52.4s
+12:07:53 disk: 523G free
+12:07:53 --- layer 9 ---
+12:07:55 corpus: 95 sequences, 17704 tokens
+12:07:56 resumed after layer 8 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer8.pt
+12:09:05 layer 9: 17704 tokens, 384/384 experts touched, 68.9s
+12:09:06 disk: 522G free
+12:09:06 --- layer 10 ---
+12:09:08 corpus: 95 sequences, 17704 tokens
+12:09:08 resumed after layer 9 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer9.pt
+12:10:10 layer 10: 17704 tokens, 383/384 experts touched, 61.4s
+12:10:11 disk: 522G free
+12:10:11 --- layer 11 ---
+12:10:13 corpus: 95 sequences, 17704 tokens
+12:10:13 resumed after layer 10 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer10.pt
+12:11:25 layer 11: 17704 tokens, 383/384 experts touched, 71.4s
+12:11:26 disk: 521G free
+12:11:26 --- layer 12 ---
+12:11:28 corpus: 95 sequences, 17704 tokens
+12:11:29 resumed after layer 11 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer11.pt
+12:12:40 layer 12: 17704 tokens, 383/384 experts touched, 71.7s
+12:12:41 disk: 520G free
+12:12:41 --- layer 13 ---
+12:12:44 corpus: 95 sequences, 17704 tokens
+12:12:44 resumed after layer 12 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer12.pt
+12:14:01 layer 13: 17704 tokens, 379/384 experts touched, 76.2s
+12:14:02 disk: 520G free
+12:14:02 --- layer 14 ---
+12:14:04 corpus: 95 sequences, 17704 tokens
+12:14:04 resumed after layer 13 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer13.pt
+12:15:24 layer 14: 17704 tokens, 380/384 experts touched, 79.9s
+12:15:25 disk: 520G free
+12:15:25 --- layer 15 ---
+12:15:28 corpus: 95 sequences, 17704 tokens
+12:15:28 resumed after layer 14 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer14.pt
+12:16:34 layer 15: 17704 tokens, 381/384 experts touched, 66.0s
+12:16:35 disk: 520G free
+12:16:35 --- layer 16 ---
+12:16:37 corpus: 95 sequences, 17704 tokens
+12:16:38 resumed after layer 15 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer15.pt
+12:17:53 layer 16: 17704 tokens, 381/384 experts touched, 74.6s
+12:17:54 disk: 520G free
+12:17:54 --- layer 17 ---
+12:17:56 corpus: 95 sequences, 17704 tokens
+12:17:56 resumed after layer 16 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer16.pt
+12:19:00 layer 17: 17704 tokens, 383/384 experts touched, 63.7s
+12:19:01 disk: 520G free
+12:19:01 --- layer 18 ---
+12:19:03 corpus: 95 sequences, 17704 tokens
+12:19:04 resumed after layer 17 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer17.pt
+12:20:08 layer 18: 17704 tokens, 380/384 experts touched, 63.5s
+12:20:09 disk: 521G free
+12:20:09 --- layer 19 ---
+12:20:11 corpus: 95 sequences, 17704 tokens
+12:20:11 resumed after layer 18 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer18.pt
+12:21:17 layer 19: 17704 tokens, 382/384 experts touched, 66.0s
+12:21:18 disk: 521G free
+12:21:18 --- layer 20 ---
+12:21:21 corpus: 95 sequences, 17704 tokens
+12:21:21 resumed after layer 19 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer19.pt
+12:22:10 layer 20: 17704 tokens, 382/384 experts touched, 48.7s
+12:22:11 disk: 522G free
+12:22:11 --- layer 21 ---
+12:22:13 corpus: 95 sequences, 17704 tokens
+12:22:13 resumed after layer 20 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer20.pt
+12:23:16 layer 21: 17704 tokens, 377/384 experts touched, 63.0s
+12:23:17 disk: 522G free
+12:23:17 --- layer 22 ---
+12:23:20 corpus: 95 sequences, 17704 tokens
+12:23:20 resumed after layer 21 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer21.pt
+12:24:29 layer 22: 17704 tokens, 376/384 experts touched, 68.7s
+12:24:30 disk: 521G free
+12:24:30 --- layer 23 ---
+12:24:32 corpus: 95 sequences, 17704 tokens
+12:24:32 resumed after layer 22 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer22.pt
+12:25:47 layer 23: 17704 tokens, 375/384 experts touched, 74.3s
+12:25:48 disk: 520G free
+12:25:48 --- layer 24 ---
+12:25:51 corpus: 95 sequences, 17704 tokens
+12:25:51 resumed after layer 23 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer23.pt
+12:26:40 layer 24: 17704 tokens, 382/384 experts touched, 48.1s
+12:26:41 disk: 522G free
+12:26:41 --- layer 25 ---
+12:26:43 corpus: 95 sequences, 17704 tokens
+12:26:43 resumed after layer 24 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer24.pt
+12:27:55 layer 25: 17704 tokens, 380/384 experts touched, 72.1s
+12:27:56 disk: 521G free
+12:27:56 --- layer 26 ---
+12:27:59 corpus: 95 sequences, 17704 tokens
+12:27:59 resumed after layer 25 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer25.pt
+12:29:03 layer 26: 17704 tokens, 383/384 experts touched, 63.5s
+12:29:04 disk: 521G free
+12:29:04 --- layer 27 ---
+12:29:06 corpus: 95 sequences, 17704 tokens
+12:29:07 resumed after layer 26 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer26.pt
+12:30:11 layer 27: 17704 tokens, 381/384 experts touched, 64.5s
+12:30:12 disk: 521G free
+12:30:12 --- layer 28 ---
+12:30:14 corpus: 95 sequences, 17704 tokens
+12:30:15 resumed after layer 27 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer27.pt
+12:31:03 layer 28: 17704 tokens, 379/384 experts touched, 47.8s
+12:31:04 disk: 523G free
+12:31:04 --- layer 29 ---
+12:31:06 corpus: 95 sequences, 17704 tokens
+12:31:06 resumed after layer 28 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer28.pt
+12:32:09 layer 29: 17704 tokens, 380/384 experts touched, 62.3s
+12:32:10 disk: 523G free
+12:32:10 --- layer 30 ---
+12:32:12 corpus: 95 sequences, 17704 tokens
+12:32:12 resumed after layer 29 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer29.pt
+12:33:22 layer 30: 17704 tokens, 377/384 experts touched, 68.7s
+12:33:23 disk: 522G free
+12:33:23 --- layer 31 ---
+12:33:25 corpus: 95 sequences, 17704 tokens
+12:33:26 resumed after layer 30 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer30.pt
+12:34:29 layer 31: 17704 tokens, 375/384 experts touched, 62.9s
+12:34:30 disk: 522G free
+12:34:30 --- layer 32 ---
+12:34:32 corpus: 95 sequences, 17704 tokens
+12:34:32 resumed after layer 31 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer31.pt
+12:35:20 layer 32: 17704 tokens, 376/384 experts touched, 48.0s
+12:35:21 disk: 523G free
+12:35:21 --- layer 33 ---
+12:35:24 corpus: 95 sequences, 17704 tokens
+12:35:24 resumed after layer 32 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer32.pt
+12:36:33 layer 33: 17704 tokens, 374/384 experts touched, 69.0s
+12:36:34 disk: 522G free
+12:36:34 --- layer 34 ---
+12:36:36 corpus: 95 sequences, 17704 tokens
+12:36:37 resumed after layer 33 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer33.pt
+12:37:41 layer 34: 17704 tokens, 376/384 experts touched, 63.6s
+12:37:42 disk: 522G free
+12:37:42 --- layer 35 ---
+12:37:45 corpus: 95 sequences, 17704 tokens
+12:37:45 resumed after layer 34 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer34.pt
+12:38:48 layer 35: 17704 tokens, 372/384 experts touched, 63.4s
+12:38:49 disk: 522G free
+12:38:49 --- layer 36 ---
+12:38:52 corpus: 95 sequences, 17704 tokens
+12:38:52 resumed after layer 35 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer35.pt
+12:39:41 layer 36: 17704 tokens, 373/384 experts touched, 48.8s
+12:39:42 disk: 523G free
+12:39:42 --- layer 37 ---
+12:39:44 corpus: 95 sequences, 17704 tokens
+12:39:45 resumed after layer 36 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer36.pt
+12:40:49 layer 37: 17704 tokens, 377/384 experts touched, 64.0s
+12:40:50 disk: 523G free
+12:40:50 --- layer 38 ---
+12:40:52 corpus: 95 sequences, 17704 tokens
+12:40:52 resumed after layer 37 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer37.pt
+12:42:04 layer 38: 17704 tokens, 364/384 experts touched, 71.3s
+12:42:05 disk: 527G free
+12:42:05 --- layer 39 ---
+12:42:07 corpus: 95 sequences, 17704 tokens
+12:42:08 resumed after layer 38 from /home/jschmied/git/deepseek-v41-flash-spark/results/trace-unmasked-20260913/state/after_layer38.pt
+12:43:22 layer 39: 17704 tokens, 362/384 experts touched, 74.4s
+12:43:22 running final norm + head for the teacher-forced accuracy check
+12:43:34 teacher-forced check: {'coding': {'mean_nll': 0.9964730143547058, 'top1_acc': 0.8155059218406677, 'n': 11415}, 'general': {'mean_nll': 3.3499581813812256, 'top1_acc': 0.4688408076763153, 'n': 6194}}
+12:43:35 disk: 534G free
+12:43:35 == ALL DONE == layers 5-39

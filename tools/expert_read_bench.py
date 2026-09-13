@@ -4,7 +4,7 @@
 My first attempt at this measured a harness that issued an expert's chunks serially inside one
 thread, and concluded `read_chunk_mb=4` costs 41%. `engine/experts.py:219` submits every chunk but
 the first to a second pool, so that harness did not describe this engine. This one imports
-`ExpertReader` and calls `_read_leased`, so whatever it reports is what the engine does.
+`ExpertStore` and calls `_read_leased`, so whatever it reports is what the engine does.
 
 Sweeps DSV41_READ_CHUNK_MB x concurrent experts, with DSV41_IO_THREADS fixed per run. Reads only
 layer shards that are actually on disk. Nothing is written and no arena is allocated: the sink is a
@@ -26,19 +26,20 @@ ap.add_argument("--reps", type=int, default=3)
 a = ap.parse_args()
 
 sys.path.insert(0, a.repo)
-index = json.load(open(os.path.join(a.model_dir, "model.safetensors.index.json")))["weight_map"]
+index = json.load(open(os.path.join(a.model_dir, "model.safetensors.index.json")))
+wmap = index["weight_map"]
 
 # which layers do we have a shard for?
 have = {f for f in os.listdir(a.model_dir) if f.endswith(".safetensors")}
 layers = sorted({int(k.split("layers.")[1].split(".")[0])
-                 for k, v in index.items() if ".ffn.experts." in k and v in have})
+                 for k, v in wmap.items() if ".ffn.experts." in k and v in have})
 if not layers:
     sys.exit("no layer shard with experts is present")
 print(f"  layers on disk: {layers}")
 
 
 class StubArena:
-    slots = 1
+    slots = 64          # only has to exceed transient_slots; no memory is allocated
     bytes_per_slot = 0
 
 
@@ -48,7 +49,7 @@ def cell(chunk_mb, conc, io_threads, n):
     import importlib
     import engine.experts as EX
     importlib.reload(EX)
-    r = EX.ExpertReader(a.model_dir, index, StubArena(), 40,
+    r = EX.ExpertStore(a.model_dir, index, StubArena(), 40,
                         transient_slots=8, read_threads=a.read_threads)
     rnd = random.Random(1234)
     jobs = [(rnd.choice(layers), rnd.randrange(384)) for _ in range(n)]

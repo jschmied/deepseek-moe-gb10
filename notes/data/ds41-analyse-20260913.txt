@@ -1,0 +1,125 @@
+  40 layers, 17704 tokens, 95 sequences
+  routed (17704, 40, 6) int16   experts seen 384
+  wrote 57 requests to /home/jschmied/git/deepseek-moe-gb10/notes/data/ds41-routing-unmasked.npz (4.5 MB), skipped 38
+  prompt tokens 17-31 (median 21), decode tokens 55-435 (median 137)
+== ALL DONE ==
+
+################ verify-block union ################
+  57 requests, 40 layers, 384 experts, top-6
+
+  block k  distinct/layer  per step (40L)   marginal   per token
+        1            6.00           240.0                  240.0
+        2           10.13           405.3      +4.13       202.6
+        3           13.70           548.1      +3.57       182.7
+        4           16.87           674.9      +3.17       168.7
+        5           19.82           792.9      +2.95       158.6
+        6           22.56           902.5      +2.74       150.4
+        7           25.14          1005.5      +2.57       143.6
+        8           27.53          1101.1      +2.39       137.6
+
+  'per token' = distinct experts a step touches divided by the tokens it verifies;
+  flat means widening is free in bytes, rising means it is not.
+== ALL DONE ==
+
+################ engine residency, 98 GB FP4 arena ################
+  57 requests, 40 layers, 384 experts, 14551 tokens
+  arena 98 GB / 18.80 MB = 5212 slots = 33.9% of 15360 (layer, expert) pairs
+
+  measured stream: last 12 requests, 1004 decode tokens
+
+  transient         warm start   coverage  miss/tok   GB/tok  promoted
+          0               cold     82.04%     30.07    0.565         0
+          0  global (held-out)     82.51%     29.75    0.559         0
+          8               cold     82.80%     32.09    0.603        51
+          8  global (held-out)     83.88%     30.96    0.582        54
+        100               cold     82.66%     32.07    0.603       606
+        100  global (held-out)     83.69%     30.96    0.582       633
+        400               cold     81.90%     32.75    0.616      2252
+        400  global (held-out)     82.71%     31.73    0.596      2278
+       1000               cold     80.46%     34.71    0.653      5894
+       1000  global (held-out)     81.09%     33.90    0.637      5904
+
+  pool global     coverage  82.71%  miss/tok  31.73  GB/tok  0.596
+  pool per-layer  coverage  82.22%  miss/tok  32.91  GB/tok  0.619
+== ALL DONE ==
+
+################ engine residency, 90.5 GB (env.example) ################
+  57 requests, 40 layers, 384 experts, 14551 tokens
+  arena 90 GB / 18.80 MB = 4813 slots = 31.3% of 15360 (layer, expert) pairs
+
+  measured stream: last 12 requests, 1004 decode tokens
+
+  transient         warm start   coverage  miss/tok   GB/tok  promoted
+          0               cold     80.60%     32.79    0.617         0
+          0  global (held-out)     80.99%     32.58    0.613         0
+          8               cold     81.06%     35.01    0.658        51
+          8  global (held-out)     81.85%     34.01    0.639        53
+        100               cold     80.85%     35.24    0.663       607
+        100  global (held-out)     81.60%     34.24    0.644       613
+        400               cold     79.90%     36.47    0.686      2313
+        400  global (held-out)     80.57%     35.59    0.669      2319
+       1000               cold     78.38%     38.35    0.721      5884
+       1000  global (held-out)     78.92%     37.68    0.708      5894
+
+  pool global     coverage  80.57%  miss/tok  35.59  GB/tok  0.669
+  pool per-layer  coverage  80.25%  miss/tok  36.51  GB/tok  0.686
+== ALL DONE ==
+
+################ engine residency, 60 GB (tighter) ################
+  57 requests, 40 layers, 384 experts, 14551 tokens
+  arena 60 GB / 18.80 MB = 3191 slots = 20.8% of 15360 (layer, expert) pairs
+
+  measured stream: last 12 requests, 1004 decode tokens
+
+  transient         warm start   coverage  miss/tok   GB/tok  promoted
+          0               cold     74.08%     45.32    0.852         0
+          0  global (held-out)     74.23%     45.31    0.852         0
+          8               cold     73.06%     51.06    0.960        58
+          8  global (held-out)     73.48%     50.57    0.951        58
+        100               cold     72.78%     51.57    0.970       637
+        100  global (held-out)     73.18%     51.11    0.961       644
+        400               cold     71.76%     53.55    1.007      2539
+        400  global (held-out)     72.11%     53.16    0.999      2549
+       1000               cold     68.74%     59.99    1.128      6311
+       1000  global (held-out)     68.98%     59.74    1.123      6308
+
+  pool global     coverage  72.11%  miss/tok  53.16  GB/tok  0.999
+  pool per-layer  coverage  71.17%  miss/tok  55.45  GB/tok  1.043
+== ALL DONE ==
+
+################ static/dynamic split (per-request, ds-09 method) ################
+cap=0.20 dyn=0.10   global      coverage  65.3%  [ 45.1- 82.1]   loads/tok   83.3   delta  +0.0 pp
+cap=0.20 dyn=0.10   prefill     coverage  62.1%  [ 50.7- 74.6]   loads/tok   90.8   delta  -3.1 pp
+cap=0.20 dyn=0.10   oracle      coverage  88.7%  [ 84.9- 94.5]   loads/tok   27.2   delta +23.4 pp
+cap=0.20 dyn=0.10   cold        coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta +12.5 pp
+cap=0.20 dyn=0.25   global      coverage  71.1%  [ 57.1- 83.2]   loads/tok   69.4   delta  +0.0 pp
+cap=0.20 dyn=0.25   prefill     coverage  70.7%  [ 63.7- 79.1]   loads/tok   70.3   delta  -0.4 pp
+cap=0.20 dyn=0.25   oracle      coverage  87.0%  [ 83.9- 91.7]   loads/tok   31.3   delta +15.9 pp
+cap=0.20 dyn=0.25   cold        coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta  +6.7 pp
+cap=0.20 dyn=0.50   global      coverage  75.3%  [ 66.3- 84.7]   loads/tok   59.2   delta  +0.0 pp
+cap=0.20 dyn=0.50   prefill     coverage  76.3%  [ 71.4- 81.7]   loads/tok   56.9   delta  +0.9 pp
+cap=0.20 dyn=0.50   oracle      coverage  83.8%  [ 78.8- 87.0]   loads/tok   38.9   delta  +8.4 pp
+cap=0.20 dyn=0.50   cold        coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta  +2.4 pp
+cap=0.20 dyn=1.00   global      coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta  +0.0 pp
+cap=0.20 dyn=1.00   prefill     coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta  +0.0 pp
+cap=0.20 dyn=1.00   oracle      coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta  +0.0 pp
+cap=0.20 dyn=1.00   cold        coverage  77.8%  [ 67.3- 84.5]   loads/tok   53.4   delta  +0.0 pp
+
+cap=0.34 dyn=0.10   global      coverage  80.3%  [ 65.1- 90.9]   loads/tok   47.2   delta  +0.0 pp
+cap=0.34 dyn=0.10   prefill     coverage  75.3%  [ 68.0- 82.9]   loads/tok   59.4   delta  -5.1 pp
+cap=0.34 dyn=0.10   oracle      coverage  96.9%  [ 93.8- 99.9]   loads/tok    7.5   delta +16.5 pp
+cap=0.34 dyn=0.10   cold        coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  +2.1 pp
+cap=0.34 dyn=0.25   global      coverage  83.4%  [ 74.0- 92.1]   loads/tok   39.8   delta  +0.0 pp
+cap=0.34 dyn=0.25   prefill     coverage  82.7%  [ 79.0- 86.9]   loads/tok   41.6   delta  -0.7 pp
+cap=0.34 dyn=0.25   oracle      coverage  95.1%  [ 92.4- 99.0]   loads/tok   11.8   delta +11.7 pp
+cap=0.34 dyn=0.25   cold        coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  -1.0 pp
+cap=0.34 dyn=0.50   global      coverage  84.4%  [ 74.9- 92.2]   loads/tok   37.5   delta  +0.0 pp
+cap=0.34 dyn=0.50   prefill     coverage  85.5%  [ 79.3- 89.8]   loads/tok   34.8   delta  +1.2 pp
+cap=0.34 dyn=0.50   oracle      coverage  90.9%  [ 87.3- 93.7]   loads/tok   21.8   delta  +6.6 pp
+cap=0.34 dyn=0.50   cold        coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  -2.0 pp
+cap=0.34 dyn=1.00   global      coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  +0.0 pp
+cap=0.34 dyn=1.00   prefill     coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  +0.0 pp
+cap=0.34 dyn=1.00   oracle      coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  +0.0 pp
+cap=0.34 dyn=1.00   cold        coverage  82.4%  [ 69.1- 91.0]   loads/tok   42.2   delta  +0.0 pp
+
+== ALL DONE ==

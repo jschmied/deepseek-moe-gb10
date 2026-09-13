@@ -86,6 +86,17 @@ reconstruction cosine of exactly **0.50** (the 1/√R limit) because merging col
 identity. **Gate on FREE GENERATION, never teacher-forced loss** — CB3 measured *better* held-out
 (1.5384/3.2087 vs 1.5705/3.3790) and then emitted `<!DOCTYPE>` until the cap.
 
+> **NO LONGER DOWNLOAD-BLOCKED, and largely superseded, 2026-09-13.** All 40 layer shards were
+> already on the backup server, and `expert_trace.py` streams them one at a time, so DS4.1's routing
+> was traced on the box without the checkpoint ever being resident. The measurements are in
+> [ds41-measured-2026-09-13.md](ds41-measured-2026-09-13.md) and they change this section's ranking:
+> the real traffic is **0.582 GB/token at a 34 % arena**, not 271 MB at 44 %, so the path stays
+> bandwidth-bound after any schedule fix; **`DSV41_IO_THREADS` and `DSV41_READ_CHUNK_MB` are both
+> measured dead**; the engine's read path already gives 5.0–6.4 GB/s so the missing 2× is the
+> per-layer blocking `pool.map` in `resolve()`; and **drafter-driven prediction moves from last place
+> to near the top**, because the oracle headroom on DS4.1 is 5–6× the bytes rather than Qwen's
+> ~5 points.
+
 ## DOWNLOAD-BLOCKED — needs DS4.1 (7 of 48 shards local, 521 GB free, thin margin)
 
 Bit-exact, in order of value:
