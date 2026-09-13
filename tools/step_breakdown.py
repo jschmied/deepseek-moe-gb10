@@ -1,9 +1,22 @@
 #!/usr/bin/env python3
 """Where does a decode step actually go? From the engine's own counters, not a profiler.
 
-Two plans have now been ranked on a stored 63-of-117 ms CB3 split taken on an all-resident config.
-Ours is 68% idle on NVMe, so the shares differ and the ranking follows the shares. v41_engine.py
-already exports every phase timer on x_engine_stats; this just reads them and prints the split.
+FIRST VERSION WAS WRONG and this is the fix. The counters on x_engine_stats are cumulative over the
+WHOLE request -- prefill included -- so dividing them by the decode step count attributes thousands
+of prefill expert loads to decode. It produced nvme_read_s of 131 s inside a request that took tens,
+and a negative kernel_s.
+
+So: same prompt twice, different max_tokens, and difference the counters. Prefill is identical in
+both, so the delta is decode alone.
+
+Two further traps this exposed, both worth knowing before reading any of these numbers:
+  * `read_s`, `h2d_s` and `lease_s` are accumulated INSIDE the io-thread pool (experts.py:233, 291,
+    309), so they are thread-seconds summed over 12 workers, not wall. Compare them to each other,
+    never to a wall clock.
+  * `route_s`, `load_s`, `resolve_s` (experts.py:460-465) and `moe_s`, `attn_s` (model.py:512, 524)
+    are main-thread and ARE wall.
+  * `kernel_s = moe_s - resolve_s` is only meaningful in the pruned all-resident configuration. On
+    the streaming path resolve_s is large and the subtraction goes negative.
 """
 import json, urllib.request
 
@@ -34,17 +47,24 @@ def run(prompt, n):
     return st, k
 
 
-for tag, p, n in (("short", "Write a Python LRU cache with tests.", 400),
-                  ("long", "Explain transformer attention in detail, with worked arithmetic.", 400)):
-    st, k = run(p, n)
-    if not st:
-        print(f"  {tag}: no x_engine_stats"); continue
-    acc = st.get("accept_len_mean") or 1.0
-    steps = max(k / acc, 1)
-    print(f"\n  {tag}: {k} tokens, accept {acc}, ~{steps:.0f} steps, "
-          f"hit {st.get('expert_hit_rate')}, nvme {st.get('nvme_gb')} GB")
-    print(f"  {'counter':<16} {'total s':>9} {'ms/step':>9}")
+WALL = {"route_s", "load_s", "resolve_s", "moe_s", "attn_s", "engram_s"}
+PROMPT = "Write a Python LRU cache with get and put in O(1), with docstrings and three unit tests."
+for short_n, long_n in ((64, 512),):
+    a_st, a_k = run(PROMPT, short_n)
+    b_st, b_k = run(PROMPT, long_n)
+    if not a_st or not b_st:
+        print("  no x_engine_stats"); break
+    acc = b_st.get("accept_len_mean") or 1.0
+    dsteps = max((b_k - a_k) / acc, 1)
+    print(f"\n  same prompt at {a_k} and {b_k} tokens -> {b_k-a_k} extra tokens, "
+          f"~{dsteps:.0f} extra steps at accept {acc}")
+    print(f"  prefill is identical in both, so the DELTA below is decode alone.\n")
+    print(f"  {'counter':<16} {'delta s':>9} {'ms/step':>9}  kind")
     for key in KEYS:
-        if key in st:
-            print(f"  {key:<16} {st[key]:>9.2f} {1000*st[key]/steps:>9.2f}")
+        if key in a_st and key in b_st:
+            d = b_st[key] - a_st[key]
+            kind = "wall" if key in WALL else "thread-seconds (12 workers)"
+            print(f"  {key:<16} {d:>9.2f} {1000*d/dsteps:>9.2f}  {kind}")
+    print(f"\n  nvme_gb delta {b_st['nvme_gb']-a_st['nvme_gb']:.1f} GB over {b_k-a_k} tokens "
+          f"= {(b_st['nvme_gb']-a_st['nvme_gb'])/(b_k-a_k)*1000:.0f} MB/token")
 print("== ALL DONE ==")
