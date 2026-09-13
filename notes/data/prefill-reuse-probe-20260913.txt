@@ -1,0 +1,11 @@
+    4 chunks x 2048 tokens, 192 distinct experts per chunk
+    arm                                       ms  unpacked GB
+    A: re-unpack per chunk (today)         316.2        14.44
+    B: unpack once, reuse                  421.7         3.61
+  
+    reuse is 0.75x on this layer  (-33.4% wall)
+    NOTE: resident experts only -- this is the unpack half. The NVMe half (experts re-READ
+    per chunk, ~341 GB measured on an 11.3k prompt) is larger and is not in this number.
+  == ALL DONE ==
+--- restoring the server ---
+== ALL DONE ==

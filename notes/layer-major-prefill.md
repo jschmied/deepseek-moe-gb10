@@ -97,3 +97,40 @@ is now lower priority, because:
 unpack is per call, and layer-major is exactly what amortises a per-call cost across chunks. Had
 `direct` won there would have been no unpack left to amortise and the transpose would have been worth
 only its NVMe half.
+
+---
+
+## The two-chunk diagnostic: unpack-once is 33 % SLOWER, and the reason matters
+
+4 chunks × 2048 tokens through one layer, 192 distinct experts, resident throughout, median of 3:
+
+| arm | ms | GB unpacked |
+|---|---|---|
+| A: re-unpack the population per chunk (**what the engine does today**) | **316.2** | 14.44 |
+| B: unpack once into a full-population scratch, reuse across chunks | **421.7** | 3.61 |
+
+**Arm B moves a quarter of the bytes and takes a third longer.** So the redundant unpack is not the
+cost — and the hypothesis that motivated the whole transpose does not survive its own first test.
+
+**The likely mechanism, and it is the interesting part.** `moe_forward_prefill` unpacks in batches of
+32 into a **0.6 GB** scratch and runs the FP4 kernel over that batch immediately. The unpack is
+therefore doubling as a **prefetch**: it writes each expert into a small buffer microseconds before
+the kernel reads it. Arm B unpacks all 192 into a **3.6 GB** arena once, so from chunk 2 onward the
+kernel reads memory that has long gone cold. Removing the "redundant" work removed the locality that
+made the kernel fast.
+
+**What this experiment does NOT settle, and I should have separated it.** Arm B changed two things at
+once: it stopped re-unpacking *and* it abandoned 32-expert batching. A cleaner arm B keeps the
+batching — iterating the same 32-expert windows over slices of a pre-unpacked arena — and would say
+whether the loss is the cold read or the batch size. Queued as `prefill-reuse-probe-batched`. Until
+that runs, the honest statement is **"unpack once with one big scratch is worse"**, not "reuse is
+worthless".
+
+**What it does not touch at all**: the NVMe half. This probe ran on resident experts by design, so
+the 341 GB → ~61 GB of experts *re-read from disk per chunk* is untouched and remains the larger
+prize — by our own arithmetic ~107 s of a 131 s prefill against the unpack's ~6 s. The transpose's
+case now rests entirely on that half, which is the half the probe could not measure.
+
+Worth noting the shape of the surprise: this is the second time today that a "redundant" operation
+turned out to be load-bearing. The first was `DSV41_CB3_PREFILL`, where running the CB3 kernel
+directly — and skipping the unpack entirely — cost 34 % of TTFT.

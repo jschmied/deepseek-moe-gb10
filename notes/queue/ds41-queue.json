@@ -108,7 +108,13 @@
    ],
    "expect_min": 25,
    "guard": "test $(df --output=avail -BG / | tail -1 | tr -dc 0-9) -gt 20",
-   "note": "the two-chunk/one-layer diagnostic that decides the layer-major CED transpose, without rewriting execution order. Arm A re-unpacks the population per chunk as moe_forward_prefill does today; arm B unpacks once and reuses. Isolates the UNPACK half on resident experts -- a floor, since the NVMe half (341 GB re-read on an 11.3k prompt) is larger and not in it."
+   "note": "the two-chunk/one-layer diagnostic that decides the layer-major CED transpose, without rewriting execution order. Arm A re-unpacks the population per chunk as moe_forward_prefill does today; arm B unpacks once and reuses. Isolates the UNPACK half on resident experts -- a floor, since the NVMe half (341 GB re-read on an 11.3k prompt) is larger and not in it.",
+   "state": "done",
+   "started": "2026-09-13 22:19:14",
+   "log": "/home/jschmied/ds41-queue/logs/prefill-reuse-probe.log",
+   "finished": "2026-09-13 22:21:13",
+   "rc": 0,
+   "minutes": 2.0
   },
   {
    "name": "sweep-prefill-chunk",
@@ -244,6 +250,16 @@
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
    "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
    "note": "separates the two halves of the 7.0% MAX_SEQ effect. ARENA_GB is pinned in .env for this one so coverage cannot move; whatever is left is the indexer scan width. NOTE: set ARENA_GB=56.75 in .env before this runs, or it measures the same confound again."
+  },
+  {
+   "name": "prefill-reuse-probe-batched",
+   "cmd": [
+    "/home/jschmied/prefill_reuse_job.sh"
+   ],
+   "needs_user": true,
+   "prereqs": [],
+   "expect_min": 25,
+   "note": "NEEDS the probe extended first: arm B must keep 32-expert batching over slices of a pre-unpacked arena, so that 'stop re-unpacking' is separated from 'abandon batching'. The first probe conflated them and arm B lost 33%, probably to cold reads rather than to reuse itself."
   }
  ]
 }
