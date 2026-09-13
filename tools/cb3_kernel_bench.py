@@ -29,7 +29,9 @@ ap.add_argument("--shard", default="/opt/llm/models/dsv41-shards/model-00023-of-
 ap.add_argument("--slots", default="384,1024,2048,4096,5212")
 ap.add_argument("--real-slots", type=int, default=4, help="slots filled with real weights (correctness)")
 ap.add_argument("--block", type=int, default=6, help="verify block width; decode shape is [block, 6]")
-ap.add_argument("--distinct", type=int, default=23, help="distinct experts a layer touches (trace: 22.56 at k=6)")
+ap.add_argument("--distinct", type=int, default=23, help="pool size to draw from")
+ap.add_argument("--exact-distinct", type=int, default=0,
+                help="generate EXACTLY this many distinct experts among the P pairs (trace-accurate)")
 ap.add_argument("--reps", type=int, default=30)
 ap.add_argument("--starts", type=int, default=3)
 ap.add_argument("--format", default="cb3", choices=["cb3", "cb2"])
@@ -100,8 +102,16 @@ def bench(arena, slots_n):
     rng = np.random.default_rng(7)
     draws = []
     for _ in range(16):
-        pool = rng.choice(slots_n, size=min(a.distinct, slots_n), replace=False)
-        ids = rng.choice(pool, size=(T, K))
+        if a.exact_distinct:
+            d = min(a.exact_distinct, T * K, slots_n)
+            pool = rng.choice(slots_n, size=d, replace=False)
+            # every pool member used at least once, the rest filled at random -> exactly d distinct
+            ids = np.concatenate([pool, rng.choice(pool, size=T * K - d)])
+            rng.shuffle(ids)
+            ids = ids.reshape(T, K)
+        else:
+            pool = rng.choice(slots_n, size=min(a.distinct, slots_n), replace=False)
+            ids = rng.choice(pool, size=(T, K))
         draws.append((torch.tensor(ids, dtype=torch.int32, device=dev), len(np.unique(ids))))
     wgt = torch.full((T, K), 1.0 / K, dtype=torch.float32, device=dev)
     BM = C3._pick_bm(T * K)
