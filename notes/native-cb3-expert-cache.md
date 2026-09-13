@@ -392,3 +392,45 @@ at the same bytes, rather than the 46.3 % I wrote for a 98 GB arena.
 
 40 of the 88 files the index names are absent, and the server reached `ready` and served a
 generation. The deliberate choice to leave expert tensors pointing at missing files held up.
+
+## End to end: 6.16 tok/s against a stored 2.68 — and why that number is not yet clean
+
+`bench/bench.py --workload code --runs 2 --osl 512 --ignore-eos`, the same invocation behind the
+stored baseline. 1 warmup + 2 measured: **5.49 / 6.28 / 6.04 tok/s**.
+
+| | baseline `[stored, 2026-09-10]` | this run `[measured today]` |
+|---|---|---|
+| decode | 2.68 tok/s | **6.16** |
+| TPOT | 374 ms | 162.5 |
+| TTFT | 11,050 ms | 8,699 |
+| expert hit rate | 0.830 | 0.896 |
+| NVMe per run | 530.3 GB | **208.7** |
+| accept_len | 3.03 | 3.59 |
+
+**2.30×.** My derived estimate was +42 %; the measurement is +130 %, so I underestimated, and the
+excess is in the part I cannot yet attribute.
+
+**The confound, stated before the number gets quoted.** The baseline ran **FP4** experts
+(`kernel triton-fp4`); this run is **CB3**. Three things changed at once:
+
+1. the cache — no `fp4_to_cb3_v2` per miss, 13.77 MB reads in one extent;
+2. coverage — a CB3 slot is smaller, so the same arena holds 5,530 experts instead of ~4,250, 36.0 %
+   against 27.7 %;
+3. **the arithmetic** — 3-bit experts are not 4-bit experts.
+
+`accept_len` moving 3.03 → 3.59 is the tell: the cache cannot change acceptance, so (3) is doing
+some of this. Whatever the split, **this is not a pure speed measurement — it is a different model.**
+
+The clean A/B is unpruned FP4 on today's build, and it is **not runnable**: it needs the 296 GB of
+layer shards deleted during the cache build, and only 141 GB is free. Two ways to get the
+attribution without them, in increasing cost:
+
+* **Match coverage, not memory.** Pin `ARENA_GB` so the CB3 arena holds exactly the baseline's 3,926
+  slots (56.8 GB). That neutralises (2) with one env var and no download, leaving (1)+(3). If decode
+  stays far above 2.68, coverage was not the story.
+* **Build an FP4 cache in the same record format** (288.8 GB — does not fit today) to isolate (1)
+  from (3) exactly.
+
+Until one of those runs, the honest claim is narrow: **the unpruned full-router path went from 2.68
+to 6.16 tok/s**, which is what a user gets, with the model's expert precision changed from 4-bit to
+3-bit as part of the change.

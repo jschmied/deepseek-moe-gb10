@@ -1,0 +1,9 @@
+== cb3-cache-unpruned: workload=code isl=n/a osl=512 runs=2 warmup=1 thinking=False engine=v41
+  warmup  isl=62 ttft=  10391.7 ms  tpot= 182.03 ms  decode=  5.49 tok/s  out=512 (length)
+          accept_len=3.39  expert_hit=0.8888  nvme=237.26 GB  engram_rows=46320
+  run1    isl=62 ttft=   8716.4 ms  tpot= 159.25 ms  decode=  6.28 tok/s  out=512 (length)
+          accept_len=3.56  expert_hit=0.8997  nvme=203.76 GB  engram_rows=44352
+  run2    isl=62 ttft=   8680.7 ms  tpot= 165.66 ms  decode=  6.04 tok/s  out=512 (length)
+          accept_len=3.62  expert_hit=0.8921  nvme=213.72 GB  engram_rows=43376
+  -> MEDIAN  ttft=8698.5359 ms  tpot=162.4582 ms  decode=6.1578 tok/s
+  -> ENGINE  accept_len=3.59  expert_hit=0.8959  nvme=208.74 GB  engram_rows=43864.0
