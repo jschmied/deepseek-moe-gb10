@@ -1,0 +1,11 @@
+  prompt      chars  words distinct maxrep   finish      s  verdict
+  code-html    2652    344    0.439      1   length  103.9  PASS
+  code-py      4073    511    0.282      1   length  151.0  PASS
+  prose-en     4779    731    0.536      1     stop  190.0  PASS
+  prose-de     3077    396    0.667      1     stop  161.3  PASS
+  reason        377     73    0.644      1     stop   32.5  PASS
+
+  5/5 pass
+== ALL DONE ==
+
+[exited with code 0]

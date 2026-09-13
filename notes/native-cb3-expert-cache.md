@@ -434,3 +434,44 @@ attribution without them, in increasing cost:
 Until one of those runs, the honest claim is narrow: **the unpruned full-router path went from 2.68
 to 6.16 tok/s**, which is what a user gets, with the model's expert precision changed from 4-bit to
 3-bit as part of the change.
+
+## The confound, removed — and the quality gate CB3 was expected to fail
+
+**Coverage-matched run.** Pinning `ARENA_GB=56.75` gives **exactly 3,926 CB3 slots**, the baseline's
+own slot count and 25.6 % coverage, so the only remaining differences are the delivery and the
+arithmetic:
+
+| config | slots | coverage | hit rate | NVMe/run | accept_len | **decode** |
+|---|---|---|---|---|---|---|
+| FP4 baseline `[stored 2026-09-10]` | 3,926 | 25.6 % | 0.830 | 530.3 GB | 3.03 | **2.68** |
+| CB3 cache, **matched coverage** | 3,926 | 25.6 % | 0.806 | 367.9 GB | 3.68 | **3.94** |
+| CB3 cache, same memory | 5,530 | 36.0 % | 0.896 | 208.7 GB | 3.59 | **6.16** |
+
+**The 2.30× splits into 1.47× at fixed coverage and a further 1.56× from coverage.** Two things worth
+noting in the middle row: CB3's hit rate is slightly *worse* than FP4's at identical slot counts
+(0.806 vs 0.830), so none of this is better caching; and NVMe falls 530.3 → 367.9 GB, a ratio of
+1.44 against the 1.365 the smaller read predicts, so bytes account for essentially all of the
+traffic drop.
+
+What the 1.47× is *not* purely: `accept_len` is 3.68 against the baseline's 3.03. A cache cannot
+change acceptance, so 3-bit expert arithmetic is contributing throughput here as well as bytes, and I
+cannot separate those two without an FP4 cache in the same record format (288.8 GB, does not fit).
+
+**Free-generation gate: 5/5 pass.**
+
+| prompt | words | distinct ratio | max line repeat | finish |
+|---|---|---|---|---|
+| html page | 344 | 0.439 | 1 | length |
+| python LRU + tests | 511 | 0.282 | 1 | length |
+| English essay | 731 | 0.536 | 1 | **stop** |
+| German prose | 396 | 0.667 | 1 | **stop** |
+| reasoning | 73 | 0.644 | 1 | **stop** |
+
+This is the gate CB3 **failed** at keep 40 % — distinct-token ratio 0.03, `<!DOCTYPE>` to the cap.
+Unpruned CB3 passes it comfortably, three of five terminating naturally. That is independent support
+for the repo's own root cause (`e28d0d7`: *"Expert pruning, not the engine, is what degenerates long
+generations"*), from a configuration nobody had run: the 3-bit format was never the problem, the
+truncated router was.
+
+It is a structural gate, not a quality benchmark — it says the model is not degenerating, not that
+3-bit costs nothing. NLL against FP4 and a real agent turn are still owed.

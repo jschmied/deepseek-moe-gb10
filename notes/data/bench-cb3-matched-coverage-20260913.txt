@@ -1,0 +1,9 @@
+== cb3-cache-matched-coverage: workload=code isl=n/a osl=512 runs=2 warmup=1 thinking=False engine=v41
+  warmup  isl=62 ttft=  11158.2 ms  tpot= 242.98 ms  decode=  4.12 tok/s  out=512 (length)
+          accept_len=3.73  expert_hit=0.8081  nvme=352.33 GB  engram_rows=42240
+  run1    isl=62 ttft=   9942.6 ms  tpot= 257.69 ms  decode=  3.88 tok/s  out=512 (length)
+          accept_len=3.81  expert_hit=0.7948  nvme=375.6 GB  engram_rows=41648
+  run2    isl=62 ttft=  10180.4 ms  tpot= 250.11 ms  decode=  4.00 tok/s  out=512 (length)
+          accept_len=3.55  expert_hit=0.8169  nvme=360.21 GB  engram_rows=44544
+  -> MEDIAN  ttft=10061.5129 ms  tpot=253.897 ms  decode=3.9395 tok/s
+  -> ENGINE  accept_len=3.68  expert_hit=0.8058  nvme=367.905 GB  engram_rows=43096.0
