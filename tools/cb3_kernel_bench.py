@@ -32,6 +32,8 @@ ap.add_argument("--block", type=int, default=6, help="verify block width; decode
 ap.add_argument("--distinct", type=int, default=23, help="distinct experts a layer touches (trace: 22.56 at k=6)")
 ap.add_argument("--reps", type=int, default=30)
 ap.add_argument("--starts", type=int, default=3)
+ap.add_argument("--format", default="cb3", choices=["cb3", "cb2"])
+ap.add_argument("--graph", action="store_true", help="time a CUDA-graph replay, as the engine does")
 a = ap.parse_args()
 
 sys.path.insert(0, a.repo)
@@ -41,13 +43,19 @@ import fp4_moe as F4
 from engine.codebook_sim import CodebookSim
 
 dev = torch.device("cuda")
-sim = CodebookSim(3, dev)
+BITS = 3 if a.format == "cb3" else 2
+sim = CodebookSim(BITS, dev)
+ARENA = C3.CB3ArenaV2 if a.format == "cb3" else C3.CB2ArenaV2
+FWD = C3.moe_forward_v3 if a.format == "cb3" else C3.moe_forward_cb2
+HAS_HI = a.format == "cb3"
+CBW = 8 if a.format == "cb3" else 4
 torch.manual_seed(0)
 
 
 def fill(arena):
     """Fault the whole arena in with in-range bytes. Content is irrelevant to the timing."""
-    for name in ("w1_lo", "w1_hi", "w3_lo", "w3_hi", "w2_lo", "w2_hi"):
+    planes = ["w1_lo", "w3_lo", "w2_lo"] + (["w1_hi", "w3_hi", "w2_hi"] if HAS_HI else [])
+    for name in planes:
         getattr(arena, name).fill_(0x5A)
     for name in ("s1", "s3", "s2"):
         getattr(arena, name).fill_(120)          # a real UE8M0 exponent (measured: 119-122)
@@ -77,7 +85,7 @@ def check(arena, n_real):
     x = torch.randn(T, C3.DIM, dtype=torch.bfloat16, device=dev)
     slots = torch.tensor([[0, 1], [1, 0]], dtype=torch.int32, device=dev)[:T, :K]
     wgt = torch.full((T, K), 0.5, dtype=torch.float32, device=dev)
-    out = C3.moe_forward_v3(x, slots, wgt, arena)
+    out = FWD(x, slots, wgt, arena)
     ref = F4.moe_forward_reference(x, slots, wgt, arena)
     return float((out.float() - ref.float()).norm() / ref.float().norm())
 
@@ -102,24 +110,46 @@ def bench(arena, slots_n):
     bytes_per_rep = mean_distinct * arena.bytes_per_slot
 
     for i in range(8):
-        C3.moe_forward_v3(x, draws[i % len(draws)][0], wgt, arena)
+        FWD(x, draws[i % len(draws)][0], wgt, arena)
     torch.cuda.synchronize()
     out = []
-    for _ in range(a.starts):
-        t0 = time.perf_counter()
-        for i in range(a.reps):
-            C3.moe_forward_v3(x, draws[i % len(draws)][0], wgt, arena)
-        torch.cuda.synchronize()
-        out.append((time.perf_counter() - t0) / a.reps)
+    if a.graph:
+        # capture one call on a static slot tensor; the engine replays with the slot buffer
+        # rewritten in place, so copy_ the draw in before each replay exactly as it would.
+        slot_buf = draws[0][0].clone()
+        s = torch.cuda.Stream()
+        s.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s):
+            for _ in range(3):
+                FWD(x, slot_buf, wgt, arena)
+        torch.cuda.current_stream().wait_stream(s)
+        g = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(g):
+            FWD(x, slot_buf, wgt, arena)
+        for _ in range(a.starts):
+            t0 = time.perf_counter()
+            for i in range(a.reps):
+                slot_buf.copy_(draws[i % len(draws)][0])
+                g.replay()
+            torch.cuda.synchronize()
+            out.append((time.perf_counter() - t0) / a.reps)
+    else:
+        for _ in range(a.starts):
+            t0 = time.perf_counter()
+            for i in range(a.reps):
+                FWD(x, draws[i % len(draws)][0], wgt, arena)
+            torch.cuda.synchronize()
+            out.append((time.perf_counter() - t0) / a.reps)
     ms = statistics.median(out) * 1e3
     return ms, bytes_per_rep / statistics.median(out) / 1e9, NB, mean_distinct, bytes_per_rep
 
 
-print(f"  shard {os.path.basename(a.shard)}   block {a.block} x top-6, {a.distinct} distinct experts")
+print(f"  shard {os.path.basename(a.shard)}   format {a.format}   block {a.block} x top-6, "
+      f"{a.distinct} distinct experts   {'CUDA-graph replay' if a.graph else 'eager'}")
 print(f"  {'slots':>6} {'arena GB':>9} {'NBmax':>6} {'distinct':>8} {'read MB':>9} {'ms':>8} {'GB/s':>8}   rel err")
 for s in [int(x) for x in a.slots.split(",")]:
     try:
-        arena = C3.CB3ArenaV2(s, dev)
+        arena = ARENA(s, dev)
         arena.sim = sim
         fill(arena)
         nreal = load_real(arena, a.real_slots) if a.real_slots else 0

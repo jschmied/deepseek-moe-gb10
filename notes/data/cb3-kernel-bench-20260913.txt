@@ -20,3 +20,23 @@ bytes sweep at 5212 slots (75.3 GB):
     16      14.6    210.5  1.277   164.8
     23      18.0    260.2  1.524   170.8
     36      23.6    341.5  1.944   175.7
+
+CUDA-graph replay (engine-realistic), 5212 slots:
+  distinct   4.0  57.8 MB  0.474 ms  122.0 GB/s
+  distinct   8.0 115.6 MB  0.772 ms  149.8
+  distinct  14.6 210.5 MB  1.249 ms  168.5
+  distinct  18.0 260.2 MB  1.511 ms  172.2
+  distinct  23.6 341.5 MB  1.886 ms  181.0
+  distinct  28.6 412.9 MB  2.279 ms  181.2   (block 8)
+  distinct  31.6 457.1 MB  2.505 ms  182.5   (block 10)
+  distinct  37.8 546.6 MB  2.907 ms  188.0   (block 10)
+
+empty-block control (distinct held at 8, bytes constant from P=36):
+  P=12 0.671  P=24 0.747  P=36 0.775  P=48 0.782  P=60 0.785 ms
+
+CB2ArenaV2 + moe_forward_cb2, graph replay, 5212 slots (52.1 GB):
+  distinct   8.0  79.9 MB  0.639 ms  125.2 GB/s
+  distinct  14.6 145.5 MB  1.022 ms  142.3
+  distinct  18.0 179.9 MB  1.210 ms  148.7
+  distinct  23.6 236.1 MB  1.522 ms  155.1
+  CB2/CB3 wall at 18 distinct = 1.210/1.511 = 0.801 (repo stored: 0.810)
