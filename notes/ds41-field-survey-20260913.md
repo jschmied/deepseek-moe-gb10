@@ -101,3 +101,36 @@ We and sayyidfareed remain **the only single-Spark efforts at usable speed**; th
 llama.cpp Q2_K at 2.3–2.8 tok/s. 0xBakeer is still at `8b68fdde` with no commits since 09-12, all
 nine forks are zero commits ahead on their default branch, and **the entire issue tracker and its one
 PR are ours, with no maintainer reply**.
+
+---
+
+## Both hazards checked on our box: neither reproduces
+
+### CUDA graphs on sm_121 — 0 non-finite in 13,120 layer-probes
+
+First the cheap test: greedy output with `DSV41_GRAPHS=1` against `DSV41_GRAPHS=0`, four prompts,
+140 tokens each — **bit-identical sha256 on all four**, and self-consistent across two runs each.
+
+But that is exactly the test the field showed is insufficient: CiphemonJY's token-exact greedy gate
+**PASSED** while 17 of 997 steps carried a NaN attention output. A Python `tap` cannot see it either,
+because a callback fires only at *capture* time and not on replay.
+
+So the probe has to be **device-side, captured into the graph**. `DSV41_NAN_PROBE=1` (new, off by
+default) accumulates `(~torch.isfinite(attn_out)).sum()` per layer into a persistent device tensor,
+which is therefore replayed with the graph, and surfaces on `x_engine_stats`.
+
+**Result: 0 non-finite elements across 13,120 layer-probes** (328 decode steps × 40 layers) over
+three 400-token requests with graphs on. At CiphemonJY's rate of 17 per 997 we would have expected
+roughly 200. **The hazard does not reproduce in this configuration** — single node, 0xBakeer's
+engine, CB3 experts from the cache, against their 4-node vLLM with native FP4 and mmap Engram.
+
+That is worth having beyond the hazard itself: it means every graph-on number measured today stands.
+
+### The gate blind spot is real, and ours has it
+
+The other warning — *"a greedy output gate cannot detect a feature being silently disabled"*, shown
+by forcing Engram rows to zero and watching a token-exact gate still return PASS — applies to our
+five-prompt generation gate unchanged. It says the model is not degenerating; it does not say every
+component is contributing. The NaN probe above is one narrow instrument against that class; a
+feature-ablation check (zero the Engram rows, confirm the output *does* change) is the general one,
+and is not yet written.
