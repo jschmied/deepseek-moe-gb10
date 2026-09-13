@@ -20,6 +20,27 @@
    "note": "vLLM PR #56686 observation 1: the sparse-attention indexer does work proportional to the CONTEXT LIMIT, not the batch's context. Ours does the same -- fastdecode.py:288 scores max_seq//r+1 = 16,385 columns and masks afterwards, against ~31 live on the bench prompt. If decode at 4096 beats 32768 on the same short workload, the width is costing us and by how much. No kernel change needed to find out."
   },
   {
+   "name": "sweep-cb3-prefill",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "DSV41_CB3_PREFILL",
+    "--values",
+    "fp4,direct",
+    "--label",
+    "cb3prefill"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "sweep-max-seq"
+   ],
+   "expect_min": 40,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
+   "note": "P0.5 of the layer-major plan, and it is free: the switch already exists at cb3_moe.py:397, explicitly for measurement. fp4 unpacks CB3 back to FP4 per prefill call; direct runs the CB3 kernel, which their notes say is 2.3-6.7x slower at prefill shapes -- on THEIR config. Decides whether a dual-source prefill path is worth anything before any rewrite."
+  },
+  {
    "name": "sweep-block-width",
    "cmd": [
     "/home/jschmied/vllm-venv-main-dflash2/bin/python",
@@ -33,7 +54,7 @@
    ],
    "needs_user": false,
    "prereqs": [
-    "sweep-max-seq"
+    "sweep-cb3-prefill"
    ],
    "expect_min": 75,
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
