@@ -159,3 +159,49 @@ which lives in the weights and has no reason to need an n-gram lookup.
 
 Worth keeping as a standing check rather than a one-off: it is cheap, and it is the only instrument
 we have against a component being silently disabled by a refactor.
+
+---
+
+## vLLM PR #56686 — a third independent finding of the indexer defect, and one that lands on us
+
+`TarzanZhao`, 2026-09-13, draft, 8× B200 TP=8, `vllm bench throughput` on ShareGPT: **24.6 → 22.9 s
+per 1000 requests, +7.4 %**, with a per-step timer and torch.profiler traces. Unusually careful —
+six instrumented correctness checkpoints with declared tolerances, four unmodified runs bit-identical
+on every one, and the delivered head matched the baseline on all 291 recorded values.
+
+**Observation 1 is our §3 finding, measured by someone else on a different implementation.** *"Under
+full CUDA graphs, the candidate-block kernels of DeepSeek Sparse Attention did work proportional to
+the model's context limit, not to the batch's contexts."* The graph captures the worst-case width, so
+every decode step paid for a million columns per request — **5.8 ms of a 35 ms step at 830 requests**.
+Their fix: a static grid of `(rows, 8)` programs looping over each row's own `[start, end)`, so the
+launch shape stays fixed for graph replay while the work follows the context. Bit-identical, −5.0 %.
+
+That is now **three independent discoveries of the same defect class**: our bandwidth survey found it
+in 0xBakeer's `_indexer`, sayyidfareed fixed it with `context_bucket()`, and this fixes it in vLLM.
+
+**And it is live on our box.** `fastdecode.py:288` scores `st["ik"]`, the *full* cache of
+`max_seq // r + 1` rows, then masks positions past `compress_lens` afterwards (`:292`). At our
+`MAX_SEQ=32768` that is **16,385 columns per index layer per step**; on the 62-token benchmark prompt
+the live context is about **31**. A 500× ratio. Ours is 32× less severe than theirs only because our
+`max_seq` is 32k rather than 1M — the shape is identical.
+
+**It is cheap to test without touching a kernel**: sweep `MAX_SEQ` at a fixed short prompt. If decode
+at 4096 beats decode at 32768 on the same 62-token workload, the indexer width is costing us, and by
+how much. Queued as `sweep-max-seq`.
+
+**Observation 5 is aimed at our exact operating point and we have never measured it.** Hyper-connection
+mixing runs as three kernels per sublayer, six per layer, and costs **9.5 % of a large decode step,
+14 % of a prefill step and 19 % of a single-request step**. We are *always* single-request. Our
+engine has the same shape — `_hc_mixes` twice per layer plus `hc_pre`/`hc_post`. Their fused kernel
+exists for V4 but not V4.1, because the V4.1 layer carries the previous sublayer's pre-mix; they wrote
+a delayed-pre-mix variant that went 5.42 → 5.18 ms and then **failed their own correctness gate**,
+because the fused path computes the GEMM in fp32 FMA where the two-kernel path uses tf32 and the
+mixing coefficients moved 2e-4 to 3e-3. Worth having as a warning as much as a lever.
+
+**Observation 6 sets a floor we should know**: a single-request decode step is ~1,600 dependent kernel
+launches with **no kernel above 3 %**. On a compute-bound box that is 5.5 ms. We have never profiled
+our own kernel mix at all — only phase-level wall and NVMe.
+
+Not applicable to us: observation 2 (1M-wide buffers pushing the allocator into `cudaFree` — our
+buffers are 32× smaller and we are single-request), observation 3 (DeepGEMM per-shape JIT stalls of
+3.4 s — this engine is Triton), observation 4 (NCCL all-reduce protocol — TP=1 here).
