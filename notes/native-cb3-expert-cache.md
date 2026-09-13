@@ -305,3 +305,43 @@ Two honest caveats. The MoE kernel changes from `triton-fp4` to the CB3 kernel; 
 against CB2 but never against FP4, so that side is unpriced. And the end-to-end number needs the
 engine actually running, which is now unblocked: **434 GB on box with the cache against 511 raw**,
 351 GB free right now.
+
+---
+
+## The cache alone does not unblock the engine — the dense pack does
+
+Finishing the cache exposed something the disk arithmetic had missed. With `DSV41_CB3_CACHE` set the
+engine never reads an expert from the checkpoint, but `engine/model.py::Weights` still loads
+**attention, shared-expert, gate and hyper-connection** weights by name through the safetensors
+index, and those live inside the same 7.4 GB layer shards. So "434 GB on box" was wrong: serving
+still implied 296 GB of layer shards, and 296 + 203 + 197 does not fit on this disk.
+
+The fix is cheap because of how the shards are laid out. Per layer the non-expert tensors are only
+**181 MB and form exactly two contiguous runs** (measured on the real files), so they can be pulled
+by byte range instead of streaming the shard:
+
+| | |
+|---|---|
+| `tools/dense_pack_build.py` | 40 per-layer packs, **6.88 GB total**, ~1 min of LAN against 296 GB and 48 min |
+| verification | all 37 tensors of layer 20 re-read from the pack are **bit-identical** to the shard, dtypes and shapes included |
+| `tools/lean_dir_build.py` | merges the dense packs over the original index, symlinks the shards still needed whole, writes a model dir the engine can open unmodified |
+
+The packs are assembled byte-for-byte with the original dtype strings rather than round-tripped
+through torch, so no dtype mapping can go wrong.
+
+One deliberate choice: **expert tensors keep their original shard filenames in the merged index, and
+those files are absent.** With the cache on they are never opened, so if that ever stops being true
+the failure is a loud missing file rather than a silent wrong answer.
+
+### What a serving box actually needs
+
+| | GB |
+|---|---|
+| CB3 expert cache | 211.6 |
+| dense packs (40 layers) | 6.9 |
+| Engram tables (shards 47, 48) | 203.1 |
+| embeddings, head, Engram aux (shards 1, 2, 43–46) | 9.5 |
+| **total** | **431** |
+
+against **511 GB** for the raw checkpoint — and, more usefully, the 296 GB of layer shards never has
+to be resident at any point, including during the build.
