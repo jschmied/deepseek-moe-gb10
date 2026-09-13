@@ -1,0 +1,22 @@
+cb3_kernel_bench.py, 2026-09-13, idle box, moe_forward_v3 on a real CB3ArenaV2,
+block 6 x top-6, median of 3 starts x 30 reps, 16 rotating routing draws.
+Correctness vs fp4_moe.moe_forward_reference: rel err 4.45e-03..4.68e-03
+(the repo's own test threshold is 5e-3).
+
+footprint sweep (23-expert pool, 18.0 distinct touched, 260.2 MB read):
+   slots  arena GB   ms     GB/s
+     384       5.6  1.517  171.5
+    1024      14.8  1.546  168.3
+    2048      29.6  1.546  168.3
+    3072      44.4  1.521  171.0
+    4096      59.2  1.534  169.7
+    5212      75.3  1.549  168.0
+    6200      89.6  1.519  171.2
+
+bytes sweep at 5212 slots (75.3 GB):
+  pool  distinct  read MB     ms    GB/s
+     4       4.0     57.8  0.526   109.8
+     8       8.0    115.6  0.814   142.0
+    16      14.6    210.5  1.277   164.8
+    23      18.0    260.2  1.524   170.8
+    36      23.6    341.5  1.944   175.7
