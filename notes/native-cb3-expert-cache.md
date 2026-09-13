@@ -244,3 +244,64 @@ The **evidence and the measurement** stay in this repo, because they are about d
 | `deepseek-moe-gb10/tools/cb3_cache_bench.py` | the FP4-vs-cache A/B through `ExpertStore` |
 
 Rule of thumb for next time: **if the engine has to agree with it at runtime, it goes in the fork.**
+
+---
+
+## Built for real: 211.6 GB, verified, and what it is actually worth
+
+2026-09-13, 16:16. All 40 layers, 15,360 experts, **211,581,665,280 B (197 GiB)**, ~50 minutes,
+layer shards streamed from the backup server and deleted behind so the 510 GB checkpoint was never
+resident. Every expert's scale round-trip asserted during the build; one record in 32 read back and
+compared. `tools/test_cb3_cache.py` against the finished artifact: **all twelve planes byte-identical
+to the FP4 path, `moe_forward_v3` output bit-identical, max |delta| 0.0**.
+
+The manifest was written by the pre-relocation module, so `format_version` and `codec` were stamped
+in afterwards — the record bytes are unaffected, only the identity strings were added.
+
+### Load path, on the real artifact
+
+Same layer, both arms through `ExpertStore._load_into_slot`:
+
+| arm | conc 1 | conc 2 | conc 4 |
+|---|---|---|---|
+| FP4 checkpoint (18.81 MB) | 25.54 ms | 24.57 | 24.99 |
+| native CB3 cache (13.77 MB) | 4.38 | 2.40 | 2.28 |
+
+And reads scattered over the whole 197 GiB file, which a real miss stream would be — the single-layer
+test could not show this:
+
+| conc | 1 | 2 | 4 | 8 | 12 |
+|---|---|---|---|---|---|
+| ms/load | 3.58 | 2.77 | 3.05 | 3.01 | 2.98 |
+| GB/s | 3.84 | 4.97 | 4.52 | 4.58 | 4.62 |
+
+**Scatter costs nothing** — 3.58 ms against 4.38 for the single-layer case at conc 1. The record being
+one aligned extent is doing its job.
+
+### What it is worth, stated honestly against the right baseline
+
+The 6–11× is **CB3-arena-with-cache against CB3-arena-without**. Nobody runs the latter: the measured
+streaming baseline is `kernel triton-fp4` (RESULTS §4), and an FP4 arena pays no repack. So that
+number is not a speedup over the shipped configuration — it is the reason CB3 was **unusable** as a
+streaming arena, now removed.
+
+Against the FP4 baseline the value is that a CB3 slot is smaller, so the same arena bytes hold more
+experts. Simulated on the real trace, held out, `transient_slots=8`, global warm start:
+
+| arena | slot | slots | coverage | misses/token | **GB/token** |
+|---|---|---|---|---|---|
+| 73.8 GB (the baseline's own) | FP4 18.80 MB | 3,925 | 25.6 % | 42.56 | **0.800** |
+| 73.8 GB | **CB3 13.77 MB** | 5,357 | 34.9 % | 29.94 | **0.563** |
+| 98 GB | FP4 | 5,212 | 33.9 % | 30.96 | 0.582 |
+| 98 GB | **CB3** | 7,114 | 46.3 % | 19.70 | **0.370** |
+
+**1.42× less NVMe traffic at the same arena bytes**, 1.57× at 98 GB. The measured baseline moves
+916 MB/token and decodes at 2.68 tok/s with essentially all of the 188 s decode being NVMe, so
+0.704× traffic is **≈3.8 tok/s, +42 %** — *derived*, chaining a simulated miss rate onto their
+measured baseline, and the sim runs 13 % low on absolute misses (42.6 against their 48.7) so it is
+ratios that carry, not levels.
+
+Two honest caveats. The MoE kernel changes from `triton-fp4` to the CB3 kernel; §6c measured CB3
+against CB2 but never against FP4, so that side is unpriced. And the end-to-end number needs the
+engine actually running, which is now unblocked: **434 GB on box with the cache against 511 raw**,
+351 GB free right now.

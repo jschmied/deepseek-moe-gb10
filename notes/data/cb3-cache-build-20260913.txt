@@ -1,0 +1,44 @@
+  payload 13,773,312 B  record 13,774,848 B (pad 1536)  full cache 211.6 GB
+  planes: w1_lo@0 w1_hi@2949120 w1_cb@4423680 s1@4442112 w3_lo@4582656 w3_hi@7531776 w3_cb@9006336 s3@9024768 w2_lo@9165312 w2_hi@12114432 w2_cb@13588992 s2@13629952
+  layer  0: 384 experts in   71.2s  (185.3 ms/expert)  12 read-back verified   disk free 538 GB
+  layer  1: 384 experts in   70.4s  (183.3 ms/expert)  12 read-back verified   disk free 533 GB
+  layer  2: 384 experts in   39.7s  (103.4 ms/expert)  12 read-back verified   disk free 530 GB
+  layer  3: 384 experts in   77.9s  (202.9 ms/expert)  12 read-back verified   disk free 522 GB
+  layer  4: 384 experts in   71.5s  (186.2 ms/expert)  12 read-back verified   disk free 524 GB
+  layer  5: 384 experts in   68.2s  (177.6 ms/expert)  12 read-back verified   disk free 519 GB
+  layer  6: 384 experts in   69.8s  (181.7 ms/expert)  12 read-back verified   disk free 513 GB
+  layer  7: 384 experts in   65.5s  (170.5 ms/expert)  12 read-back verified   disk free 508 GB
+  layer  8: 384 experts in   50.0s  (130.2 ms/expert)  12 read-back verified   disk free 505 GB
+  layer  9: 384 experts in   69.5s  (181.0 ms/expert)  12 read-back verified   disk free 498 GB
+  layer 10: 384 experts in   62.0s  (161.5 ms/expert)  12 read-back verified   disk free 493 GB
+  layer 11: 384 experts in   71.5s  (186.1 ms/expert)  12 read-back verified   disk free 487 GB
+  layer 12: 384 experts in   79.1s  (205.9 ms/expert)  12 read-back verified   disk free 482 GB
+  layer 13: 384 experts in   69.2s  (180.3 ms/expert)  12 read-back verified   disk free 476 GB
+  layer 14: 384 experts in   57.4s  (149.5 ms/expert)  12 read-back verified   disk free 472 GB
+  layer 15: 384 experts in   58.0s  (151.0 ms/expert)  12 read-back verified   disk free 466 GB
+  layer 16: 384 experts in   62.3s  (162.3 ms/expert)  12 read-back verified   disk free 461 GB
+  layer 17: 384 experts in   70.8s  (184.4 ms/expert)  12 read-back verified   disk free 455 GB
+  layer 18: 384 experts in   69.3s  (180.3 ms/expert)  12 read-back verified   disk free 450 GB
+  layer 19: 384 experts in   60.2s  (156.7 ms/expert)  12 read-back verified   disk free 452 GB
+  layer 20: 384 experts in   57.4s  (149.5 ms/expert)  12 read-back verified   disk free 454 GB
+  layer 21: 384 experts in   79.4s  (206.9 ms/expert)  12 read-back verified   disk free 449 GB
+  layer 22: 384 experts in   74.6s  (194.4 ms/expert)  12 read-back verified   disk free 444 GB
+  layer 23: 384 experts in   79.2s  (206.2 ms/expert)  12 read-back verified   disk free 438 GB
+  layer 24: 384 experts in   55.3s  (143.9 ms/expert)  12 read-back verified   disk free 434 GB
+  layer 25: 384 experts in   66.4s  (173.0 ms/expert)  12 read-back verified   disk free 428 GB
+  layer 26: 384 experts in   70.1s  (182.6 ms/expert)  12 read-back verified   disk free 422 GB
+  layer 27: 384 experts in   76.5s  (199.2 ms/expert)  12 read-back verified   disk free 417 GB
+  layer 28: 384 experts in   66.7s  (173.6 ms/expert)  12 read-back verified   disk free 412 GB
+  layer 29: 384 experts in   79.1s  (206.0 ms/expert)  12 read-back verified   disk free 414 GB
+  layer 30: 384 experts in   76.1s  (198.2 ms/expert)  12 read-back verified   disk free 409 GB
+  layer 31: 384 experts in   59.8s  (155.6 ms/expert)  12 read-back verified   disk free 404 GB
+  layer 32: 384 experts in   60.6s  (157.8 ms/expert)  12 read-back verified   disk free 398 GB
+  layer 33: 384 experts in   73.2s  (190.6 ms/expert)  12 read-back verified   disk free 393 GB
+  layer 34: 384 experts in   76.9s  (200.3 ms/expert)  12 read-back verified   disk free 388 GB
+  layer 35: 384 experts in   71.5s  (186.3 ms/expert)  12 read-back verified   disk free 382 GB
+  layer 36: 384 experts in   56.4s  (147.0 ms/expert)  12 read-back verified   disk free 378 GB
+  layer 37: 384 experts in   70.7s  (184.0 ms/expert)  12 read-back verified   disk free 372 GB
+  layer 38: 384 experts in   70.7s  (184.2 ms/expert)  12 read-back verified   disk free 374 GB
+  layer 39: 384 experts in   68.0s  (177.1 ms/expert)  12 read-back verified   disk free 376 GB
+  manifest -> /home/jschmied/dsv41-cb3/experts-cb3-s3.bin.json
+== ALL DONE ==
