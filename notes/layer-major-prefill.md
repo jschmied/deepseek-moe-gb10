@@ -66,3 +66,34 @@ Then the rest of the proposal's order stands as written: event-based miss stagin
 autotune plus down/reduce fusion, shared-expert overlap, delayed mHC seam fusion, Engram early H2D,
 and the candidate-only indexer last — that one only pays above ~100k context, and our own
 `sweep-max-seq` will say what the current full-width scan costs us at 32k first.
+
+---
+
+## P0.5, measured — but it answers a narrower question than the plan asked
+
+`DSV41_CB3_PREFILL` A/B, median of 3 runs per arm, fresh server each, same 62-token prompt:
+
+| arm | TTFT | TPOT | decode | expert hit | arena slots |
+|---|---|---|---|---|---|
+| `fp4` — unpack CB3→FP4, run the FP4 kernel (**default**) | **8.18 s** | 160.0 ms | 6.25 tok/s | 0.8966 | 5,669 |
+| `direct` — run the CB3 kernel at prefill shapes | **10.98 s** | 158.8 | 6.30 | 0.9008 | 5,714 |
+
+**The shipped default is right: unpacking wins TTFT by 34 %.** Decode is unchanged (6.25 vs 6.30,
+inside the spread), which is the expected signature of a prefill-only switch and a useful check that
+the knob does what it says. The result is if anything understated — the `direct` arm happened to get
+a slightly *larger* arena and a *better* hit rate and still lost prefill by 2.8 s.
+
+This confirms 0xBakeer's stored "2.3–6.7× the FP4 time at prefill shapes" **directionally** on our
+configuration. Our 1.34× is much smaller than their kernel-level range because TTFT also contains
+attention, Engram and the dense path; the MoE kernel is only part of it.
+
+**What it does not answer.** The plan's P0.5 was `CB3 → unpack → FP4` against **native FP4 read from
+disk** → FP4. I measured `CB3 → unpack → FP4` against **CB3 run directly**. Those are different
+pairs: mine settles *whether the unpack earns its keep*, not *whether a second on-disk FP4 source
+would beat it*. That one still needs the 296 GB of FP4 experts we deleted, so it stays open — and it
+is now lower priority, because:
+
+**The result strengthens the layer-major case rather than replacing it.** Prefill must unpack, the
+unpack is per call, and layer-major is exactly what amortises a per-call cost across chunks. Had
+`direct` won there would have been no unpack left to amortise and the transpose would have been worth
+only its NVMe half.
