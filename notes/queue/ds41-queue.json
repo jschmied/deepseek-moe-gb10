@@ -92,6 +92,19 @@
    "note": "where the step actually goes, from the engine's own timers -- attn_s, moe_s, kernel_s, route_s, load_wait_s, lease_s, h2d_s, nvme_read_s, engram_s. Two plans in a row have been ranked on 0xBakeer's stored 63-of-117 ms split, which is an all-resident config; ours is 68% idle. No profiler needed, the counters are already exported."
   },
   {
+   "name": "prefill-reuse-probe",
+   "cmd": [
+    "/home/jschmied/prefill_reuse_job.sh"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "step-breakdown"
+   ],
+   "expect_min": 25,
+   "guard": "test $(df --output=avail -BG / | tail -1 | tr -dc 0-9) -gt 20",
+   "note": "the two-chunk/one-layer diagnostic that decides the layer-major CED transpose, without rewriting execution order. Arm A re-unpacks the population per chunk as moe_forward_prefill does today; arm B unpacks once and reuses. Isolates the UNPACK half on resident experts -- a floor, since the NVMe half (341 GB re-read on an 11.3k prompt) is larger and not in it."
+  },
+  {
    "name": "sweep-prefill-chunk",
    "cmd": [
     "/home/jschmied/vllm-venv-main-dflash2/bin/python",
@@ -105,7 +118,7 @@
    ],
    "needs_user": false,
    "prereqs": [
-    "step-breakdown"
+    "prefill-reuse-probe"
    ],
    "expect_min": 75,
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
