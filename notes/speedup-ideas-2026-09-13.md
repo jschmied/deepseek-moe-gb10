@@ -87,9 +87,64 @@ identity. **Gate on FREE GENERATION, never teacher-forced loss** — CB3 measure
 
 ## DOWNLOAD-BLOCKED — needs DS4.1 (7 of 48 shards local, 521 GB free, thin margin)
 
-Fix the expert-read schedule (2.68 → ~6 GB/s, taking the full-quality unpruned path from 2.68 toward
-**10–16 tok/s**); adaptive LRU warmed by the prompt's own routing; n-gram row prefetch; hot/cold mixed
-precision; drafter-driven expert prefetch.
+Bit-exact, in order of value:
+
+- **Fix the expert-read schedule.** Cheapest first: (a) raise `DSV41_IO_THREADS` from 12 — a 5-minute
+  env A/B, and if it moves anything at all that *proves* the semaphore rather than the device was the
+  limit; (b) stop holding the staging lease across the H2D + `stream.synchronize()` — hand the buffer to
+  a completion thread so the read pool never waits on a CUDA stream; (c) `preadv`+`O_DIRECT` straight
+  into a `cudaHostAlloc` arena, deleting the upload entirely; (d) issue a whole verify block's misses
+  for a layer as one batch — the engine already sees 20.96 distinct experts/layer, so the union is
+  naturally wide, it just is not in flight together. Takes the full-quality unpruned path from 2.68
+  toward **10–16 tok/s**, against the pruned config's 23.5.
+- **Adaptive LRU warmed by the prompt's own routing.** The LRU itself is worth ~20 coverage points at
+  the same capacity [stored, ds-06]. The new part is seeding the arena from the routing observed during
+  *this request's* prefill rather than a global trace: coding and general top-25% sets overlap at a
+  Jaccard of only 0.18–0.31, and prefill sees hundreds to thousands of tokens of exactly this request's
+  domain, at 337–2,300 tok/s, before a single token is decoded. Free domain adaptation, paid out of a
+  phase that is compute-bound. 271 MB/token of NVMe reads at ~93% coverage vs 360–460 for the frozen
+  set. **The deciding simulation is runnable today** — the traces are local and it needs no GPU.
+- **Prefetch n-gram rows the moment token ids exist.** 48 rows × 264 B per token, addressed by token id
+  alone; a verify block's addresses are known the instant the drafter emits. 288 random 264-B reads is
+  4.7 ms at the device's 61.5k IOPS, against a stored 58.9 ms step of which 48.5 ms is the Engram wait —
+  so that wait is scheduling, not capacity. Warm steady-state gain is probably small; the value is cold
+  start and long-context prefill, and it becomes load-bearing once the expert reads get 2.2× faster.
+- **Drafter-driven expert prefetch.** Ranked last and pushed lower by today's own numbers: at 12.8 ms
+  per draft step and ~0 ms to widen the verify window, buying lookahead by drafting *deeper* is
+  expensive while buying queue depth by drafting *wider* is free, so the batching item above dominates
+  it on the same axis. One layer of lookahead cannot cover an NVMe fetch anyway (6 experts × 14.45 MB ≈
+  14 ms at 6 GB/s); the only published cold-NVMe number is +8%. Kill it offline for a day's work: replay
+  a trace, count how many of the target's layer-L experts the drafter already names for that position,
+  and stop under ~60%.
+
+## Small quality loss — real candidates, and the gate they must pass
+
+Both of these trade accuracy for residency, so neither may be judged on held-out loss alone. This repo
+has already been burned by exactly that: CB3 3-bit measured *better* held-out (1.5384/3.2087 vs
+1.5705/3.3790), was predicted to three decimals by the simulator, and then emitted `<!DOCTYPE>` until
+the output cap. The gate is NLL/token **and** the five-prompt free-generation check (distinct-token
+ratio > 0.25, structural intactness) **and** NIAH **and** a real agent turn.
+
+- **Product-quantize the PLE at ~8 B/row** (Qwen; runnable today). Trainless k-means: 160 dims → 8
+  subvectors × 20 dims × 256 centroids, 47.68 GiB → ~2.6 GiB, dequant on gather. This is the resident
+  alternative to the swap-removal above: no page-cache dependency and no cold-TTFT cliff, at the cost of
+  a real quality question. It beats HashK by construction — HashK's re-hash plus mean-pooling sits at a
+  reconstruction cosine of exactly 0.50, the 1/√R mean-pooling limit, because merging colliding rows
+  destroys row identity, while PQ preserves it. Ready-made fallbacks already exist and are measured by
+  others: trainless INT4 g16 at 32 GB and NVFP4 g16 at 28.8 GB (knowledge 92.2–92.9 vs base 92.2,
+  tool-calling 77.7–78.7 vs 79.2), and an NVFP4 PLE at 26.8 GiB behind a plugin. Half-day kill: fit the
+  PQ, reconstruct, measure per-head cosine offline; below ~0.9 there is no reason to prefer it to the
+  bit-exact route.
+- **Hot/cold mixed precision for DS4.1 experts** (download-blocked). Not more uniform compression —
+  that is spent, the checkpoint is FP4-native at ~2.6 effective bits and CB3 at 14.45 MB is itself under
+  a cloud from the degeneration episode. Instead keep the hot ~44% at native FP4 and demote only the
+  cold tail, i.e. exactly the experts that will be streamed anyway. Published shape recovers 77.57%
+  average against INT4's 78.11% and static INT2's 73.09% at the same budget, no retraining. Cuts the
+  miss bytes only: 271 MB/token → ~205–230, i.e. 13–16 tok/s → ~16–20.
+
+An adjacent lever worth more than drafter prefetch: capacity budgeting that drops experts whose
+*aggregated* routing weight across a whole block is negligible. Much cheaper in quality than cutting
+global top-k, which we rejected at k=5 for +0.025 nats on prose.
 
 ## Killed outright
 
@@ -106,6 +161,11 @@ precision; drafter-driven expert prefetch.
   gap": both rested on `fp8bench.txt` from 2026-09-03. Re-measured: **163–170 TF flat**, and blockwise
   is now within ~6% of per-tensor.
 - **Tree drafting** — removed from vLLM main, feature request closed as not planned.
+- **NVMe I/O from inside a CUDA graph** via `cudaLaunchHostFunc`. Legal and safe across replays,
+  but the stream counts as *idle* for the duration of the callback, host funcs across streams may
+  serialize onto one CUDA worker thread, and the Python bindings are broken (only the first replay
+  calls the host function, later replays segfault). Use a host node to *signal* an existing I/O
+  worker, never to hold a `pread`.
 
 ## An unresolved conflict worth one A/B
 
