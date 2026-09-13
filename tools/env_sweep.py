@@ -52,6 +52,17 @@ for v in vals:
     sh(["./start.sh", "--no-wait"], env=env)
     if not wait_health():
         print(f"  {a.var}={v}: SERVER DID NOT COME UP", flush=True); failed += 1; continue
+    # start.sh truncates logs/server.log, so the arena line of every arm but the last was lost on
+    # the first sweep -- and arena size is exactly the confound when the swept var changes cache
+    # sizing. Capture it per arm before the bench runs.
+    try:
+        srv = open(os.path.join(a.repo, "logs/server.log")).read()
+        arena = [l for l in srv.splitlines() if "arena " in l and "slots" in l]
+        if arena:
+            print(f"      {arena[-1].strip()[:120]}", flush=True)
+            open(os.path.join(a.outdir, f"{a.label}-{v}.arena"), "w").write(arena[-1])
+    except OSError:
+        pass
     r = sh([os.path.expanduser("~/vllm-venv-main-dflash2/bin/python"), "bench/bench.py",
             "--workload", "code", "--runs", str(a.runs), "--osl", str(a.osl), "--ignore-eos",
             "--base", a.base, "--label", f"{a.label}-{v}"], env=env, timeout=7200)
