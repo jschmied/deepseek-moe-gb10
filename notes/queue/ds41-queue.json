@@ -104,7 +104,7 @@
    ],
    "needs_user": false,
    "prereqs": [
-    "step-breakdown"
+    "sweep-cb3-prefill"
    ],
    "expect_min": 25,
    "guard": "test $(df --output=avail -BG / | tail -1 | tr -dc 0-9) -gt 20",

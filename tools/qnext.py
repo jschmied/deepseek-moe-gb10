@@ -75,6 +75,23 @@ def busy() -> list[str]:
             and "-dl." not in l.split()[0]]
 
 
+def cycles(q):
+    """Names caught in a prereq cycle. Re-queuing a finished job with a new prereq is how one gets
+    created, and without this the queue just reports 'nothing runnable' with every job blaming
+    another -- which is indistinguishable from an honest wait."""
+    dep = {i["name"]: set(i.get("prereqs", [])) for i in q["items"]}
+    done = {i["name"] for i in q["items"] if i.get("state") == "done"}
+    alive = {n: (d - done) for n, d in dep.items() if n not in done}
+    stuck = set(alive)
+    changed = True
+    while changed:                       # peel anything whose prereqs are all outside the set
+        changed = False
+        for n in list(stuck):
+            if not (alive[n] & stuck):
+                stuck.discard(n); changed = True
+    return sorted(stuck)
+
+
 def runnable(q):
     done = {i["name"] for i in q["items"] if i.get("state") == "done"}
     out = []
@@ -120,6 +137,9 @@ def show(q, dry):
         else:
             tag = why
         log(f"  {i['name']:<22} {i.get('state','queued'):<9} {i.get('expect_min','?'):>4}  {tag}")
+    c = cycles(q)
+    if c:
+        log(f"\n  PREREQ CYCLE among: {', '.join(c)} -- nothing in it can ever run")
     nxt = next((i for i, w in runnable(q) if w is None), None)
     log(f"\n  next: {nxt['name'] if nxt else '(nothing runnable)'}")
     if nxt and dry:
