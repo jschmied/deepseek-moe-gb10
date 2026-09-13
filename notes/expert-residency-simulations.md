@@ -219,6 +219,18 @@ two parents every time — no interaction to exploit.
 
 ## ds-11 — where the remaining headroom actually is
 
+> **CORRECTED, same day — this finding overstates the prize, and I built a ranking on it.** The
+> oracle arm is a static core ranked on the held-out request's own decode histogram with only 5 %
+> dynamic, and it is **never charged for filling that core**: ~95 % of the arena is pre-loaded for
+> free and only out-of-core touches count as loads. So it is not an upper bound on what a
+> demand-paged cache could do. The honest bound is Belady, measured on the DS4.1 trace through the
+> faithful cache: **1.76× fewer bytes than LRU at the 98 GB arena** (0.253 vs 0.447 GB/token), not
+> the 5–6× I read off this table — and Belady needs the whole future. At the 5–8 tokens a drafter
+> can supply the gain is **1.02–1.04×**. See section 5 of
+> [ds41-measured-2026-09-13.md](ds41-measured-2026-09-13.md) for the lookahead curve and the four
+> mechanisms it kills. The paragraph below stands only as a statement about *initialisation*, which
+> is what it was measured on.
+
 The oracle arm ranks the static core on the held-out request's own **decode** histogram — knowledge
 no serving system has. It brackets what any smarter *initialisation* could ever win:
 

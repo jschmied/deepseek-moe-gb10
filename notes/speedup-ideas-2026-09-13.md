@@ -123,7 +123,12 @@ Bit-exact, in order of value:
   4.7 ms at the device's 61.5k IOPS, against a stored 58.9 ms step of which 48.5 ms is the Engram wait —
   so that wait is scheduling, not capacity. Warm steady-state gain is probably small; the value is cold
   start and long-context prefill, and it becomes load-bearing once the expert reads get 2.2× faster.
-- **Drafter-driven expert prefetch.** Ranked last and pushed lower by today's own numbers: at 12.8 ms
+- ~~**Drafter-driven expert prefetch.**~~ **DEAD, measured 2026-09-13.** DSpark has its own
+  resident 3×128 arena (`dspark_n_routed_experts 128`, `FixedStore`) and shares the hidden state, not
+  the target's 384-expert router — so it cannot name target experts at all. Even with a perfect
+  oracle, 5–8 tokens of lookahead is worth 1.02–1.04×, because the honest ceiling is Belady at 1.76×
+  and that needs ~200 tokens. Costed cross-layer prefetch removes 4 % of blocking misses for 2.3× the
+  bytes. Original reasoning, kept because the ranking logic still holds: at 12.8 ms
   per draft step and ~0 ms to widen the verify window, buying lookahead by drafting *deeper* is
   expensive while buying queue depth by drafting *wider* is free, so the batching item above dominates
   it on the same axis. One layer of lookahead cannot cover an NVMe fetch anyway (6 experts × 14.45 MB ≈
