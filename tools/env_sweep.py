@@ -19,6 +19,9 @@ ap.add_argument("--runs", type=int, default=3)
 ap.add_argument("--osl", type=int, default=512)
 ap.add_argument("--outdir", default=os.path.expanduser("~/ds41-queue/logs"))
 ap.add_argument("--base", default="http://127.0.0.1:8001")
+ap.add_argument("--probe", default=None,
+                help="run this tool per arm instead of bench.py -- e.g. longctx_profile.py, for a\n                     variable the 62-token bench prompt cannot exercise")
+ap.add_argument("--probe-args", default="")
 a = ap.parse_args()
 
 BASE_ENV = {"DSV41_CB3_CACHE": os.path.expanduser("~/dsv41-cb3/experts-cb3-s3.bin"),
@@ -63,11 +66,26 @@ for v in vals:
             open(os.path.join(a.outdir, f"{a.label}-{v}.arena"), "w").write(arena[-1])
     except OSError:
         pass
-    r = sh([os.path.expanduser("~/vllm-venv-main-dflash2/bin/python"), "bench/bench.py",
-            "--workload", "code", "--runs", str(a.runs), "--osl", str(a.osl), "--ignore-eos",
-            "--base", a.base, "--label", f"{a.label}-{v}"], env=env, timeout=7200)
+    if a.probe:
+        r = sh([os.path.expanduser("~/vllm-venv-main-dflash2/bin/python"), a.probe]
+               + a.probe_args.split(), env=env, timeout=7200)
+    else:
+        r = sh([os.path.expanduser("~/vllm-venv-main-dflash2/bin/python"), "bench/bench.py",
+                "--workload", "code", "--runs", str(a.runs), "--osl", str(a.osl), "--ignore-eos",
+                "--base", a.base, "--label", f"{a.label}-{v}"], env=env, timeout=7200)
     out = r.stdout + r.stderr
     open(os.path.join(a.outdir, f"{a.label}-{v}.log"), "w").write(out)
+    if a.probe:
+        ok = "== ALL DONE ==" in out
+        print(f"  {a.var}={v:<6} {'ok' if ok else 'FAILED'} -> {a.label}-{v}.log", flush=True)
+        for ln in out.splitlines():
+            if ln.strip().startswith(("2000", "8000", "16000", "32000")):
+                print(f"      {ln.strip()}", flush=True)
+        if ok:
+            rows.append((v,))
+        else:
+            failed += 1
+        continue
     m = re.search(r"MEDIAN.*?decode=\s*([\d.]+)", out) or re.search(r"decode=([\d.]+) tok/s", out)
     md = re.search(r"MEDIAN\s+ttft=([\d.]+).*?tpot=([\d.]+).*?decode=([\d.]+)", out)
     acc = re.search(r"ENGINE\s+accept_len=([\d.]+)\s+expert_hit=([\d.]+)\s+nvme=([\d.]+)", out)
