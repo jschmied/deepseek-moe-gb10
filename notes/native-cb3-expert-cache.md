@@ -345,3 +345,50 @@ the failure is a loud missing file rather than a silent wrong answer.
 
 against **511 GB** for the raw checkpoint — and, more usefully, the 296 GB of layer shards never has
 to be resident at any point, including during the build.
+
+---
+
+## It runs. First engine start of this project, and three corrections it produced
+
+2026-09-13 17:22. `./start.sh` against the lean directory with `DSV41_CB3_CACHE` set, unpruned
+(no `PRUNE_KEEP`), `EXPERT_FORMAT=cb3`, `MAX_SEQ=32768`, arena auto.
+
+```
+17:21:55 weights: all non-expert weights on GPU in 77s      <- the dense packs
+17:24:10 arena 79.9 GB = 5530 cb3 expert slots (36% of all routed experts, auto)
+17:24:31 warm start done: 5130 experts resident (74.2 GB, 77.9 GB read) in 15s
+17:24:31 ready
+```
+
+**Up in 103 s from cold.** A greedy code generation returns correct, well-formed Python.
+
+### Warm start: 183 s → 15 s, measured
+
+The repo's stored warm start is **183 s for 6,160 experts** (29.7 ms each). On the cache: **5,130
+experts in 15 s**, 2.9 ms each — **~10×**, and it is the first end-to-end confirmation of the
+`_load_into_slot` microbenchmark rather than another bench of the same thing.
+
+### Correction 1: `TRANSIENT_SLOTS=8` is unusable for unpruned streaming
+
+The first start came up and then failed every request with
+`RuntimeError: transient ring exhausted: more experts in one call than transient_slots`.
+Prefill misses go to the ring, and `env.example` says it plainly two hundred lines away from the
+value: *"A prefill chunk touches ~370 of the 384 experts of every layer."* The ring must hold one
+resolve call's worth of misses, so **400 — the code default — is correct, and the 8 in `env.example`
+is only valid for the pruned all-resident profile where nothing misses at all.**
+
+So §2's recommendation ("change `transient_slots`'s code default from 400 to 8") is **withdrawn**. It
+came from simulating decode misses only, at an arena where prefill was never modelled. The sim also
+modelled the ring as evicting FIFO when full; the real engine *raises*. That arm was not realisable.
+
+### Correction 2: the arena slot is 14.45 MB, not 13.77
+
+The 3-bit scales are a **disk** format. The in-memory arena still holds 8-bit scales, exactly as
+designed — so 79.9 GB is 5,530 slots at 14,454,784 B, not 5,800 at 13,774,848. My projection quietly
+used the disk figure for the arena. Corrected coverage at this arena: **36.0 % against FP4's 27.7 %**
+at the same bytes, rather than the 46.3 % I wrote for a 98 GB arena.
+
+### Correction 3: "the engine never opens the layer shards" is now tested, not assumed
+
+40 of the 88 files the index names are absent, and the server reached `ready` and served a
+generation. The deliberate choice to leave expert tensors pointing at missing files held up.
