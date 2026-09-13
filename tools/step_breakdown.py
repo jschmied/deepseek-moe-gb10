@@ -49,22 +49,21 @@ def run(prompt, n):
 
 WALL = {"route_s", "load_s", "resolve_s", "moe_s", "attn_s", "engram_s"}
 PROMPT = "Write a Python LRU cache with get and put in O(1), with docstrings and three unit tests."
-for short_n, long_n in ((64, 512),):
-    a_st, a_k = run(PROMPT, short_n)
-    b_st, b_k = run(PROMPT, long_n)
-    if not a_st or not b_st:
-        print("  no x_engine_stats"); break
-    acc = b_st.get("accept_len_mean") or 1.0
-    dsteps = max((b_k - a_k) / acc, 1)
-    print(f"\n  same prompt at {a_k} and {b_k} tokens -> {b_k-a_k} extra tokens, "
-          f"~{dsteps:.0f} extra steps at accept {acc}")
-    print(f"  prefill is identical in both, so the DELTA below is decode alone.\n")
-    print(f"  {'counter':<16} {'delta s':>9} {'ms/step':>9}  kind")
-    for key in KEYS:
-        if key in a_st and key in b_st:
-            d = b_st[key] - a_st[key]
-            kind = "wall" if key in WALL else "thread-seconds (12 workers)"
-            print(f"  {key:<16} {d:>9.2f} {1000*d/dsteps:>9.2f}  {kind}")
-    print(f"\n  nvme_gb delta {b_st['nvme_gb']-a_st['nvme_gb']:.1f} GB over {b_k-a_k} tokens "
-          f"= {(b_st['nvme_gb']-a_st['nvme_gb'])/(b_k-a_k)*1000:.0f} MB/token")
+st, k = run(PROMPT, 512)
+d = (st or {}).get("decode_only")
+if not d:
+    print("  no decode_only in x_engine_stats -- the engine predates the prefill snapshot"); raise SystemExit(1)
+acc = st.get("accept_len_mean") or 1.0
+steps = max(k / acc, 1)
+print(f"\n  {k} tokens, accept {acc}, ~{steps:.0f} decode steps, hit {st.get('expert_hit_rate')}")
+print(f"  counters below are DECODE ONLY, from the engine's prefill snapshot.\n")
+print(f"  {'counter':<16} {'total s':>9} {'ms/step':>9}  kind")
+for key in KEYS:
+    if key in d:
+        kind = "wall" if key in WALL else "thread-seconds (12 workers)"
+        print(f"  {key:<16} {d[key]:>9.2f} {1000*d[key]/steps:>9.2f}  {kind}")
+if "bytes_read" in d:
+    print(f"\n  decode NVMe {d['bytes_read']/1e9:.1f} GB over {k} tokens "
+          f"= {d['bytes_read']/1e6/k:.0f} MB/token")
+print(f"  misses {d.get('misses')}, prefill_misses {d.get('prefill_misses')} (should be ~0 in decode)")
 print("== ALL DONE ==")

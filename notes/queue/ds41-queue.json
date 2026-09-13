@@ -87,14 +87,14 @@
    ],
    "needs_user": false,
    "prereqs": [
-    "prefill-reuse-probe"
+    "sweep-prefill-chunk"
    ],
    "expect_min": 15,
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
    "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
-   "note": "REDONE: the first run divided whole-request counters by decode steps, which attributed thousands of prefill loads to decode and produced a negative kernel_s. Now differences the same prompt at 64 and 512 tokens so prefill cancels, and labels which counters are wall and which are thread-seconds.",
+   "note": "THIRD attempt. Every counter resets per request, so neither dividing totals by decode steps nor differencing two requests can isolate decode -- prefill dominates and its run-to-run noise swamped the signal, twice. The engine now snapshots at the prefill/decode boundary and exports decode_only; this reads that.",
    "state": "queued",
-   "started": "2026-09-13 21:47:27",
+   "started": "2026-09-13 22:46:58",
    "log": "/home/jschmied/ds41-queue/logs/step-breakdown.log"
   },
   {
