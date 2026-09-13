@@ -1,23 +1,131 @@
-{"items": [
- {"name": "ds41-block-sweep",
-  "cmd": ["/home/jschmied/block_sweep.sh", "/home/jschmied/ds41-queue/logs"],
-  "needs_user": false, "prereqs": [], "expect_min": 40,
-  "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
-  "note": "acceptance vs verify width 4/8/10 -- the last open question on whether widening is free. Died once already with stderr suppressed."},
-
- {"name": "ds41-engram-ablation",
-  "cmd": ["/home/jschmied/vllm-venv-main-dflash2/bin/python", "/home/jschmied/git/deepseek-moe-gb10/tools/engram_ablation.py"],
-  "needs_user": false, "prereqs": [], "expect_min": 10,
-  "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
-  "note": "zero the engram rows and confirm the output CHANGES -- closes the gate blind spot the field demonstrated."},
-
- {"name": "ds41-free3-fit",
-  "cmd": ["/home/jschmied/vllm-venv-main-dflash2/bin/python", "/home/jschmied/git/deepseek-moe-gb10/tools/free3_fit.py"],
-  "needs_user": false, "prereqs": [], "expect_min": 20,
-  "note": "free 3-bit row codebook by DP vs CB3's E2M1 subset: -17% weight error at equal bytes, per the survey. Offline, needs a layer shard."},
-
- {"name": "ds41-nll-cb3-vs-fp4",
-  "cmd": ["/home/jschmied/vllm-venv-main-dflash2/bin/python", "/home/jschmied/git/deepseek-moe-gb10/tools/nll_cb3_vs_fp4.py"],
-  "needs_user": true, "prereqs": [], "expect_min": 90,
-  "note": "held-out NLL of CB3 against FP4 experts. NEEDS USER: wants the 296 GB of layer shards back, 141 GB free."}
-]}
+{
+ "items": [
+  {
+   "name": "sweep-block-width",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "DSV41_BLOCK",
+    "--values",
+    "3,5,7,9",
+    "--label",
+    "blockwidth"
+   ],
+   "needs_user": false,
+   "prereqs": [],
+   "expect_min": 75,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "note": "acceptance vs verify width. Offline says width is free on bytes AND on the kernel; acceptance is the only thing left that can make it not free."
+  },
+  {
+   "name": "sweep-prefill-chunk",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "DSV41_PREFILL_CHUNK",
+    "--values",
+    "1024,2048,4096,8192",
+    "--label",
+    "prefillchunk"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "sweep-block-width"
+   ],
+   "expect_min": 75,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "note": "prefill is 79% of a realistic agent turn and costs 30 MB of NVMe per prompt token. env.example says the miss term is chunks x layers x 7 GB, so quadrupling the chunk should quarter it. Highest-value knob we have not touched."
+  },
+  {
+   "name": "sweep-arena",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "ARENA_GB",
+    "--values",
+    "56.75,68,79,unset",
+    "--label",
+    "arena"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "sweep-prefill-chunk"
+   ],
+   "expect_min": 75,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "note": "the real coverage curve, to check the simulator against the engine. The sim runs 13% low on absolute misses; this says whether its RATIOS are trustworthy."
+  },
+  {
+   "name": "sweep-io-threads",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "DSV41_IO_THREADS",
+    "--values",
+    "4,12,24",
+    "--label",
+    "iothreads"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "sweep-arena"
+   ],
+   "expect_min": 55,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "note": "offline said it saturates by 4 against a default of 12, but that was the read path alone. With the CB3 cache the miss is 5x cheaper, so the balance may have moved."
+  },
+  {
+   "name": "headline-repeat",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "DSV41_HEAD_FMT",
+    "--values",
+    "fp8",
+    "--label",
+    "headline"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "sweep-io-threads"
+   ],
+   "expect_min": 25,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "note": "three more starts on the reference configuration. The 6.16 headline rests on 4 samples with an 8% spread; today two cells were off by 20-60% on a single process."
+  },
+  {
+   "name": "longctx-profile",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/longctx_profile.py",
+    "2000,8000,16000,32000",
+    "64"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "headline-repeat"
+   ],
+   "expect_min": 90,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "note": "TTFT, NVMe and MB-per-prompt-token against context length. This is the curve an extend-only prompt cache has to beat, measured instead of extrapolated from the single 11k point."
+  },
+  {
+   "name": "nll-cb3-vs-fp4",
+   "cmd": [
+    "/home/jschmied/nll_cb3_arm.sh"
+   ],
+   "needs_user": false,
+   "prereqs": [
+    "longctx-profile"
+   ],
+   "expect_min": 150,
+   "guard": "test 141 -gt 40",
+   "note": "the CB3 arm of the quality question. The FP4 arm already exists (coding NLL 0.996, top-1 81.6%) from today's trace; this reruns the same corpus and head with experts requantized through CodebookSim(3). Streams one shard at a time -- no 296 GB, which is why the old needs_user version of this job is gone."
+  }
+ ]
+}

@@ -1,5 +1,72 @@
 # TODO
 
+## THE BIGGEST ITEM: there is no prompt cache — 2026-09-13
+
+`V41Engine.generate()` calls `self._reset()` unconditionally (`engine/v41_engine.py:608`), so **every
+request re-prefills its whole context from scratch**. `LIMITATIONS.md` confirms batch size 1 and one
+serialising lock. Confirmed in data taken for other reasons: the benchmark ran the same 62-token
+prompt three times for TTFT 8,485 / 8,369 / 8,101 ms — no decay — and two identical 11,366-token
+prompts back to back gave 131.7 s then 114.3 s, which is expert-LRU warming, not prefix reuse.
+
+**What it costs.** Prefill measured at 86–99 tok/s and **30 MB of NVMe per prompt token**. A realistic
+agent turn — 10k context, 200-token reply — is ~120 s of prefill against ~32 s of decode: **79 % of
+the wall, paid again every turn on almost entirely identical tokens.** Every decode lever measured
+today (the 1.42× from the CB3 cache, +3.4 % from dense FP4, a hypothetical +13 % kernel repack) acts
+on the other 21 %.
+
+**The cheap version is very cheap.** A radix prefix cache is a big change, but this engine is
+single-sequence and serialised, and the agent case is always *turn N+1's prompt = turn N's prompt +
+reply + new user text*. So the whole win is **do not reset when the new prompt extends the previous
+one**: compare against the retained token ids, `Caches.rollback(n)` to the divergence point — and
+rollback already exists, because speculative rejection needs it.
+
+Two known constraints: the compressor works in groups of `compress_ratio`, so a reusable prefix must
+be truncated to a group boundary (`LIMITATIONS.md` already flags that rollback only restores the
+pending token inside the last chunk); and the Engram hash state is a function of token ids alone, so
+it replays deterministically and costs nothing. Memory is not a constraint — `ckv` at 32k/ratio-2 is
+~655 MB over 40 layers and `ik` ~164 MB, so a full 32k context is roughly **1 GB against the ~20 GB
+free**.
+
+Sequence: `longctx-profile` (queued) measures the curve it has to beat, then build it.
+
+## Actionable prefill and decode levers, ranked — 2026-09-13
+
+Everything here is measured today unless marked. See `ds41-measured-2026-09-13.md`,
+`ds41-serving-profile-20260913.md`, `native-cb3-expert-cache.md`, `ds41-field-survey-20260913.md`.
+
+**Prefill (79 % of an agent turn, and barely touched)**
+
+1. **Prompt cache, extend-only** — above. Removes prefill entirely for turns 2..n.
+2. **`DSV41_PREFILL_CHUNK`** (queued). `env.example` says the miss term is chunks × layers × 7 GB, so
+   quadrupling the chunk should quarter it. Default 2048, never swept here.
+3. **Engram prestage** — hash eagerly in `prepare_inputs`, one `preadv` into a pinned buffer, one
+   H2D, graphs stay on. Somebody else measured **26.1 → 80.2 tok/s c=1** from this pattern; nine files.
+4. **The indexer scores all positions when four of eight layers only consume 16,384 candidates**, and
+   materialises a `[T,32,N]` intermediate twice. Bit-exact, and roughly halves a long-context step.
+5. **QSA `float4` key rows** — someone measured prefill 359 → 174 ms from load width alone.
+
+**Decode**
+
+6. **Unblock the per-layer serialisation.** GPU is 31–33 % busy and NVMe runs at 2.3–3.0 of an
+   available 5.0–6.8 GB/s, in *both* phases. Independently confirmed by JigSawPT: a drive giving
+   10.04 GB/s at decode's own queue depth while the engine extracts 4.33, because a layer's reads
+   wait on its router. Worth ~1.25–1.35× and bit-exact.
+7. **CB2 at higher coverage** — 9,992,192 B/slot, wall ratio 0.801 measured against CB3. Trades
+   quality for coverage; needs the full gate.
+8. **3-bit scales in the arena, not just on disk** — +2.2 pp coverage, but the kernel reads the scales
+   in its inner loop and §6b showed it is occupancy-limited, so measure before building.
+9. **Widen the verify block** (queued) — free on bytes and free on the kernel; acceptance is the only
+   thing that can make it not free, which is what `sweep-block-width` settles.
+10. **Batching** — the dense chain is flat to M=48, so every non-expert byte amortises: ~+49 %
+    aggregate at 8 sequences. Needs the streaming store to survive concurrency, and the engine is
+    single-sequence today.
+
+**Measured dead, do not spend on these**: `DSV41_IO_THREADS` and `DSV41_READ_CHUNK_MB` (offline;
+`sweep-io-threads` re-checks the first now that a miss is 5× cheaper), per-layer arena budgets,
+prefill-warmed keep-sets, drafter-driven expert prefetch, cross-layer prefetch, eviction policy,
+GPUDirect Storage, io_uring, the CB3 arena repack, low-rank expert deltas, expert merging.
+
+
 ## Done 2026-09-12
 
 - Landscape survey → `notes/the-field.md` (V4.1-Flash exists, 2026-09-10, 475.3 GiB, 384+1 experts).
