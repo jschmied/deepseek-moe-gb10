@@ -218,3 +218,29 @@ bytes per miss, and no repack, from one change.
 44.4 s per layer of 384 experts (115.6 ms/expert, dominated by the same `fp4_to_cb3_v2`), so ~30 min
 of conversion for all 40 layers, overlapped with ~48 min of LAN transfer: **call it an hour**. Peak
 local footprint is the cache plus two shards; the 510 GB checkpoint is never resident.
+
+## Where the code lives, and why
+
+The **format** — writer, reader, codec, correctness test — lives together in the fork, because a
+record written by one version and read by another is the failure mode this whole note is about:
+
+| | |
+|---|---|
+| `deepseek-v41-flash-spark/tools/scale_codec.py` | the 3-bit codec, numpy + torch, and its identity string |
+| `deepseek-v41-flash-spark/tools/cb3_cache_build.py` | the writer |
+| `deepseek-v41-flash-spark/engine/cb3_cache.py` | the reader, importing the same codec module |
+| `deepseek-v41-flash-spark/tools/test_cb3_cache.py` | bit-identity against the FP4 path |
+
+They ship and version as one unit, on branch `feat/cb3-disk-cache`, and the reader now refuses a
+cache whose manifest carries a different `format_version` or `codec` string rather than serving
+skewed quantization silently. The reader no longer has its own copy of the bit math — it calls
+`scale_codec.unpack_torch`, so there is exactly one definition.
+
+The **evidence and the measurement** stay in this repo, because they are about deciding, not shipping:
+
+| | |
+|---|---|
+| `deepseek-moe-gb10/tools/scale_survey.py` | the proof that 3 bits is lossless on all 40 layers |
+| `deepseek-moe-gb10/tools/cb3_cache_bench.py` | the FP4-vs-cache A/B through `ExpertStore` |
+
+Rule of thumb for next time: **if the engine has to agree with it at runtime, it goes in the fork.**
