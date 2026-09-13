@@ -135,7 +135,13 @@
    "expect_min": 75,
    "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
    "note": "prefill is 79% of a realistic agent turn and costs 30 MB of NVMe per prompt token. env.example says the miss term is chunks x layers x 7 GB, so quadrupling the chunk should quarter it. Highest-value knob we have not touched.",
-   "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done"
+   "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
+   "state": "done",
+   "started": "2026-09-13 23:17:43",
+   "log": "/home/jschmied/ds41-queue/logs/sweep-prefill-chunk.log",
+   "finished": "2026-09-13 23:50:55",
+   "rc": 0,
+   "minutes": 33.2
   },
   {
    "name": "sweep-arena",
@@ -260,6 +266,29 @@
    "prereqs": [],
    "expect_min": 25,
    "note": "NEEDS the probe extended first: arm B must keep 32-expert batching over slices of a pre-unpacked arena, so that 'stop re-unpacking' is separated from 'abandon batching'. The first probe conflated them and arm B lost 33%, probably to cold reads rather than to reuse itself."
+  },
+  {
+   "name": "sweep-prefill-chunk-long",
+   "cmd": [
+    "/home/jschmied/vllm-venv-main-dflash2/bin/python",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/env_sweep.py",
+    "--var",
+    "DSV41_PREFILL_CHUNK",
+    "--values",
+    "1024,2048,8192",
+    "--label",
+    "prefillchunk-long",
+    "--probe",
+    "/home/jschmied/git/deepseek-moe-gb10/tools/longctx_profile.py",
+    "--probe-args",
+    "8000 64"
+   ],
+   "needs_user": false,
+   "prereqs": [],
+   "expect_min": 60,
+   "guard": "curl -sf -m 3 http://127.0.0.1:8001/health",
+   "recover": "cd ~/git/deepseek-v41-flash-spark && ./stop.sh >/dev/null 2>&1; sleep 4; DSV41_CB3_CACHE=$HOME/dsv41-cb3/experts-cb3-s3.bin DSV41_DENSE_FP4=attn,wo_a DSV41_HEAD_FMT=fp8 ./start.sh --no-wait >/dev/null 2>&1; for i in $(seq 1 25); do curl -sf -m 3 http://127.0.0.1:8001/health >/dev/null && break; sleep 15; done",
+   "note": "the re-run that can actually see the knob: an 8,000-token prompt, so 1024 is eight chunks against 8192's one. The first attempt used bench.py's 62-token prompt, which is one chunk in every arm."
   }
  ]
 }
