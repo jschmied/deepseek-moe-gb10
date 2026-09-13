@@ -44,3 +44,27 @@ sentinel. A queue enforces that work happened, not that it was correct.
 | `ds41-engram-ablation` | guard: server up | zero the Engram rows and confirm the output **changes** — closes the gate blind spot the field demonstrated |
 | `ds41-free3-fit` | offline | free 3-bit row codebook by DP against CB3's E2M1 subset (−17 % weight error at equal bytes) |
 | `ds41-nll-cb3-vs-fp4` | **needs_user** | held-out NLL of CB3 against FP4; wants the 296 GB of layer shards back against 141 GB free |
+
+## Running it unattended: what the watchdog does and does not cover
+
+The heartbeat cron is the watchdog. It fires every 30 minutes, refuses to start a second job while
+one is running, and is told to diagnose a `void`/`unknown` from its log before re-queuing rather than
+restarting blindly. Two holes had to be closed before a night run was safe:
+
+* **`expect_min` was documentation.** `subprocess.run` had no timeout, so a hung job would have held
+  the queue until morning with nothing to break the tie. It is now enforced at **3× expect_min** —
+  generous enough never to kill a slow-but-working job, short enough that one wedged process cannot
+  cost eight hours. Negative-tested: a `sleep 600` at `expect_min: 0` is killed and recorded **void,
+  rc=-9**, not done.
+* **Nothing restarted the server.** Every measurement job guards on `/health`, so a dead server would
+  have failed every guard and stalled the whole night silently. Jobs now carry an optional `recover`
+  command, run **once** before the guard is re-checked; all six server-dependent jobs restart the
+  engine on the reference configuration.
+
+Still not covered, and worth knowing:
+
+* **The cron is session-only.** If this Claude session ends, the watchdog ends with it. The queue
+  file and its state survive on disk, so the queue can be resumed by hand.
+* **A job that fails the same way twice** will be re-queued twice unless the tick reads the log. That
+  is a judgement the heartbeat prompt asks for; it is not enforced by the tool.
+* **Correctness.** As above: a queue enforces that work happened, not that it was right.

@@ -94,6 +94,13 @@ def runnable(q):
             # DS4.1 jobs need the server UP, which no prereq can express, and today's block sweep
             # died because nothing checked that before spending 12 minutes.
             r = subprocess.run(["bash", "-lc", g], capture_output=True, text=True)
+            if r.returncode != 0 and i.get("recover"):
+                # One repair attempt, then re-check. Without this a dead server silently stalls
+                # every remaining job in an unattended queue, which is the failure mode that costs
+                # a whole night rather than one job.
+                subprocess.run(["bash", "-lc", i["recover"]], capture_output=True, text=True,
+                               timeout=900)
+                r = subprocess.run(["bash", "-lc", g], capture_output=True, text=True)
             if r.returncode != 0:
                 out.append((i, f"GUARD FAILED ({g.split()[0]}): rc={r.returncode}"))
                 continue
@@ -154,7 +161,19 @@ def main() -> int:
 
     t0 = time.time()
     with open(lg, "w") as fh:
-        rc = subprocess.run(job["cmd"], stdout=fh, stderr=subprocess.STDOUT).returncode
+        # expect_min was documentation until now: a hung job held the whole queue with nothing to
+        # break the tie. Three times the estimate is generous enough that a slow-but-working job is
+        # never killed, and short enough that an unattended night does not lose eight hours to one
+        # wedged process.
+        limit = 60 * 3 * int(job.get("expect_min", 60))
+        try:
+            rc = subprocess.run(job["cmd"], stdout=fh, stderr=subprocess.STDOUT,
+                                timeout=limit).returncode
+        except subprocess.TimeoutExpired:
+            fh.write(f"\n== VOID ==  killed by qnext after {limit // 60} min "
+                     f"(3x expect_min={job.get('expect_min')})\n")
+            fh.flush()
+            rc = -9
     mins = (time.time() - t0) / 60
     text = open(lg, errors="replace").read()
     state = "done" if DONE in text else "void" if VOID in text else "unknown"
