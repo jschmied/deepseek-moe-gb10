@@ -155,3 +155,66 @@ On-box with a CB3 cache and the FP4 experts deleted: 211.6 + 203 (Engram) + 19 (
 against 511 GB today, leaving ~130 GB free on this disk. The encode streams one layer shard at a time
 from the backup server, so peak local footprint during the build is ~227 GB — the full 510 GB
 checkpoint never has to be here at all. Read cost ~48 minutes of LAN plus GPU conversion.
+
+---
+
+## Built, wired into the engine, and measured — the win is 6–12×, and not for the reason expected
+
+2026-09-13. `tools/scale_codec.py`, `tools/cb3_cache_build.py`, `tools/cb3_cache_bench.py`,
+`tools/test_cb3_cache.py`; engine side on branch `feat/cb3-disk-cache` of the fork
+(`engine/cb3_cache.py` + 43 lines in `engine/experts.py`).
+
+**Correctness first.** The codec round-trips bit-exactly on real scales in both numpy and torch. A
+cache built for 8 experts, loaded through `CB3Cache` into a `CB3ArenaV2`, is **byte-identical in all
+twelve planes** to the same experts loaded the FP4 way, and `moe_forward_v3` output is bit-identical
+(max |delta| 0.0). The builder asserts the scale round-trip on **every** expert, not a sample, and
+reads back one record in 32.
+
+**Then the benchmark**, both arms through the engine's own `ExpertStore._load_into_slot`, 96 loads,
+median of 3, 64-slot CB3 arena, layer 20:
+
+| arm | conc | MB/load | ms/load | GB/s |
+|---|---|---|---|---|
+| FP4 checkpoint | 1 | 18.81 | 25.54 | 0.74 |
+| FP4 checkpoint | 2 | 18.81 | 24.92 | 0.75 |
+| FP4 checkpoint | 4 | 18.81 | 25.28 | 0.74 |
+| **native CB3 cache** | 1 | 13.77 | **4.14** | 3.33 |
+| **native CB3 cache** | 2 | 13.77 | **2.23** | 6.18 |
+| **native CB3 cache** | 4 | 13.77 | **2.04** | 6.76 |
+
+**6.2× at one expert in flight, 12.4× at four.** That is far past the 1.27× the byte count predicts,
+so the bytes are not what is driving it. Decomposed:
+
+| | ms |
+|---|---|
+| read 18.8 MB at the measured 5.5 GB/s | 3.4 |
+| **`arena.load_slot` — `fp4_to_cb3_v2` over three tensors + H2D** | **20.9** |
+| one 3-bit scale plane expanded on the device | 0.064 |
+
+**86 % of a CB3 miss today is the repack, not the read.** The 26.7 % byte saving is the minor term;
+the major one is that the cached record is already in the arena's layout. Two independent checks
+agree: the FP4 arm does not improve at all from conc 1 to 4 (the repack serialises on the GPU while
+the reads do not), and the repo's own warm start of 6,160 experts at 183 s is 29.7 ms/expert, which
+is this cost.
+
+### Scope — be careful with this number
+
+The 6–12× is a property of **a CB3 arena taking misses**. It does not apply everywhere:
+
+* **Pruned all-resident** (the shipped `PRUNE_KEEP=0.44 EXPERT_FORMAT=cb3`) has no decode misses at
+  all, so this only shortens the 183 s warm start — to roughly 30 s.
+* **An FP4 arena** pays no repack, so there the win would be the bytes alone, ~1.27×.
+* **Unpruned streaming with a CB3 arena** is where it is worth 6–12× per miss. Whether the 2.68 tok/s
+  baseline ran CB3 or FP4 experts is **not stated** in the run's env block and I have not confirmed
+  it. That has to be settled before any end-to-end claim.
+
+There is also a compounding case if that baseline ran FP4: a CB3 cache lets the arena be CB3 —
+**7,114 slots at 98 GB against 5,213**, i.e. 46.3 % coverage against 33.9 % — *without* paying the
+repack that made CB3 unattractive for a streaming arena in the first place. More coverage, fewer
+bytes per miss, and no repack, from one change.
+
+### Build cost
+
+44.4 s per layer of 384 experts (115.6 ms/expert, dominated by the same `fp4_to_cb3_v2`), so ~30 min
+of conversion for all 40 layers, overlapped with ~48 min of LAN transfer: **call it an hour**. Peak
+local footprint is the cache plus two shards; the 510 GB checkpoint is never resident.
