@@ -216,3 +216,53 @@ and gather bookkeeping, not memory.
 
 Status: tool written and its arithmetic checked on a synthetic log; the real recording waits for the
 GPU (`longctx-profile` is running). Numbers to follow.
+
+## The oracle, measured (2026-09-14) — **3.88×**, and it is prefill-only
+
+`route-log-oracle`: one 11,344-token prompt through the engine with `DSV41_ROUTE_LOG` on, replayed
+offline. 145 prefill `resolve()` calls, 40 layers, 6 chunks per layer.
+
+| | loads | GB | vs current |
+|---|---|---|---|
+| current (engine today) | 23,798 | **327.8** | 1.00× |
+| layer-union oracle | 6,131 | **84.5** | **3.88×** |
+| layer-union, cold arena | 10,487 | 144.5 | 2.27× |
+
+**Re-read fraction: 74.2 %** — the chunk sweep's derived 74 % reproduced exactly, now from routes
+instead of from a byte extrapolation. And the oracle's "current" of 327.8 GB lands on the engine's
+own measured 331.1 GB of NVMe for the same request, which is the cross-check that says the recorder
+is seeing what the drive is doing.
+
+**Correction to this note's own extrapolation.** The chunk-sweep section above projected "~70 GB
+against the default's 331 — ~4.8× less prefill I/O". The exact answer from real routes is **84.5 GB
+and 3.88×**. The extrapolation was 21 % optimistic, because it ran the GB-per-chunk line down to one
+effective chunk and that line is not straight at the end.
+
+**Delivery-time bound** at the measured CB3 latencies:
+
+| | QD1 | QD2 | QD4 |
+|---|---|---|---|
+| current | 98.5 s | 53.1 s | **48.5 s** |
+| layer-union | 25.4 s | 13.7 s | **12.5 s** |
+
+Against a measured TTFT of **118.7 s**. So at queue depth 4, delivery is 41 % of the wall and the
+transpose takes it to 11 %: **TTFT 118.7 → ~82.7 s, 1.44×**, if compute is unchanged and the engine
+already achieves QD4. It does not — §13 measured NVMe at 2.3–3.0 GB/s of an available 5.0–6.8, and
+this request ran at 331 GB / 118.7 s = **2.79 GB/s** — so the real win is larger and the ceiling is
+set by the loader pipeline. The two levers compose rather than compete: the transpose removes 243 GB
+of reads, the pipeline decides how much of what remains is hidden.
+
+**Decode is untouched, and that is a result.**
+
+| | loads | GB |
+|---|---|---|
+| current | 1,126 | 15.5 |
+| layer-union | 1,126 | 15.5 |
+
+**Re-read fraction 0.0 %.** One token per step means one chunk per layer, so there is nothing to
+transpose. Layer-major is a prefill lever only — which is the right place for it, since prefill is
+79 % of an agent turn, but it means none of this touches the 6.24 tok/s headline.
+
+**Verdict: build it.** 3.88× on the dominant phase, bit-exact in intent (the same weights, a
+different visiting order), and it needs no residency — each 32-expert batch is read once, used by
+every chunk, discarded.
