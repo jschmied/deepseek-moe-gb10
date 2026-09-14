@@ -261,9 +261,9 @@
    ],
    "expect_min": 150,
    "guard": "test 141 -gt 40",
-   "note": "RETRY. First run traced zero layers and still printed its sentinel: the engine import was missing the repo root on sys.path, and `| sed` masked the tracer's exit status so `|| rc=1` never fired. Both fixed, layer 0 smoke-tested at 98.5 s. Streams one shard at a time; expect ~70 min.",
+   "note": "THIRD run. First traced zero layers (import + masked exit status); second collapsed 383->29 experts touched by layer 4 because the F8_E8M0 scale was DECODED rather than reinterpreted as a uint8 exponent, then OOM'd. Both fixed, layers 0-2 smoke-tested at 383/378/376 against the reference's 383/378/377.",
    "state": "queued",
-   "started": "2026-09-14 03:48:00",
+   "started": "2026-09-14 04:21:22",
    "log": "/home/jschmied/ds41-queue/logs/nll-cb3-vs-fp4.log"
   },
   {
