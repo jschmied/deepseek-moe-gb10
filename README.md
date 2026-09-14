@@ -12,6 +12,12 @@ the wrong way**. A good deal of what is here is a withdrawal.
 The engine work lives in a fork of [0xBakeer/deepseek-v41-flash-spark](https://github.com/0xBakeer/deepseek-v41-flash-spark);
 this repo is the measurements, the tools that took them, and the reasoning.
 
+**Branches in the fork.** Work happens on **`one-spark-full-router`**. `main` stays pinned to
+upstream `8b68fdd` so the delta reads cleanly, and `feat/cb3-disk-cache` is kept alive at the same
+commit because notes and commit messages link into it — it started as just the on-disk expert cache
+and had grown into the whole engine programme, which is why the trunk got a name that says what it
+is. Nothing is ever proposed upstream.
+
 **This repository is public.** It was described as private here until 2026-09-14, which was simply
 wrong and is the kind of line that invites putting something in a repo that should not be in one.
 What actually keeps it safe is a scan before every commit —
