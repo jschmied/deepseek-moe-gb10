@@ -338,3 +338,47 @@ row, and none of the decode numbers is matched on prompt — which by our own
 `acceptance-is-not-quality` rule makes cross-repo tok/s comparison meaningless (their acceptance
 spans 2.46–5.07 *within one table*). Treat the 87 tok/s streaming figure and the 337/87 ratio as the
 usable content; treat 36.6 tok/s as an unvalidated pruned-mode claim.
+
+### What we took from 0xBakeer 0.5.0, and what we left (2026-09-14)
+
+101 commits between our base `8b68fdd` and his `45a0caf`. The bulk — `tune.sh`, profile
+composition, the atlas UI, corpus fetchers, `budget.py` — serves a **pruned, profile-per-task**
+product. We measured the same day that the band which fits in CB3 degenerates (keep 0.40 and 0.44)
+and the band that passes needs 133 GB, so that product is not available to us and its tooling is
+dead weight. **Not merged.**
+
+Fourteen commits touch `engine/` or `server/`; seven are pruning-internal (named-topic keep-sets,
+`expert_topics` plumbing, maxmin edges, drop-vs-substitute, contribution ranking) and were skipped.
+Five were taken, all orthogonal to pruning — cherry-picked with `-x` so provenance stays in the log:
+
+| ours | upstream | what |
+|---|---|---|
+| `1aade3c` | 7221c81 | `test_spec_lossless` waits for the first engine's memory before loading the second |
+| `8e3ee36` | dd25179 | a generation cut off for repeating itself must not reach the caller as silence |
+| `7759de7` | 9371e60 | repairs two ways a tool call came back wrong; stops a generation that has stopped saying anything |
+| `28f1f4c` | c2fb6f5 | keeps the DSML bar out of a close tag the model did not mean |
+| `f410277` | 122350f (**split**) | the pre-flight reserves a prefill chunk |
+
+**Why `f410277` is split.** Upstream's fix has two halves. The *refusal check* — floor is now
+`max(keep_free_gb, MAX_CHUNK × 5 MB)` = 10.2 GB at our chunk against the 6 GB we configure — is
+taken, because upstream measured a 98 GB arena loading, logging `ready`, and being watchdog-killed
+on the **first request** while an 87 GB arena served. That is exactly the regime the CB2 plan sits
+in (220 experts/layer = 87.9 GB against ~88 reachable). The *auto-sizer* half raises its reserve
+from 8 GB to the same figure and would shrink our auto arena by ~2.2 GB — ~150 slots, ~1 pp of
+coverage — for safety we have not needed at 83 GB with 27k-token prefills. Held back and queued as
+an A/B rather than assumed either way.
+
+**Verified after the picks:** `server/test_tool_grammar.py` 29/29, `server/test_tool_repair.py` all
+green, server starts at 82.6 GB / 5,712 slots, greedy generation completes and terminates naturally.
+(`tools/test_cb3_cache.py` and `engine/test_kernels.py` cannot run here — both want checkpoint
+shards the streaming trace driver has deleted. Environmental, not a regression.)
+
+**Two findings taken as knowledge, not code.** `e37f458` measures prefill memory at 7.3 / 7.4 / 7.5 /
+7.5 / 9.2 GB for 8k / 16k / 32k / 64k / 128k tokens, fitting **7.2 GB + 15.1 KB per token** — a number
+we would otherwise have had to measure. And `698a8b4` adds to his LIMITATIONS that the 0.44/98
+configuration *"does not survive a prefill chunk, and long generations still degenerate past the
+gate"* — **independent confirmation of our cliff**, from his side and his own gate.
+
+**One behaviour change to be aware of:** `28f1f4c` widens grammar applicability — the docstring goes
+from "only when the request carries tools" to `supports_grammar` being true generally, which is what
+carries the stopped-generation repair. Tests pass; worth watching on real tool traffic.
