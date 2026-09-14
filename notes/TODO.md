@@ -128,6 +128,14 @@ GPUDirect Storage, io_uring, the CB3 arena repack, low-rank expert deltas, exper
 
 ## Closed 2026-09-14
 
+- **`MAX_SEQ` is not a decode lever — the 7 % was the arena.** With `ARENA_GB` pinned at 79 GB,
+  4096 and 32768 are 0.1 % apart (6.074 vs 6.080 tok/s) across an 8× range of indexer columns, and
+  the hit rate does not move. `ds41-measured-2026-09-13.md` §17; §7's reading is withdrawn there.
+  **Consequence: vLLM #56686's class of fix buys us nothing at short context**, and "lower
+  `MAX_SEQ` for speed" is off the table — it only ever worked by leaving more room for experts, so
+  raise `ARENA_GB` directly instead. Untouched by this: the indexer's cost at 20k real positions
+  (prefill item 4), which this 62-token bench cannot see.
+
 - **CB3 quality — settled.** Paired teacher-forced comparison against FP4 on the same 17,704
   tokens: coding top-1 **81.55 % → 80.67 %** (McNemar 239/138, z = 5.20, p = 2e-7), general top-1
   null. CB3's *lower* NLL is a calibration artifact — its entropy is higher, and temperature alone
