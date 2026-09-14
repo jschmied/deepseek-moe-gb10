@@ -281,3 +281,60 @@ wall that delivery does not already own.
 **Order, as it stands after the night's measurements:** prompt cache validation → re-profile decode
 on the fixed counter (§10c was withdrawn) → layer-major prefill → loader pipeline → profile →
 FlashInfer SM121 prefill/MLA and #5191 → CB2/remap experiments → packet layout.
+
+## raspy135/deepseek-v41-flash-spark_dual — and the number that matters is not the headline
+
+A dual-box fork of 0xBakeer, found 2026-09-14. Two GB10 boxes on 200 GbE direct-attach RoCE, the
+15,360 routed experts **split by parity** across the pair (EP2) with attention replicated, plus
+adaptive expert loading, a prefix cache, vision (ViT + aligner) and Docker.
+
+**README, two boxes:** prefill **~1,047 tok/s on a 4,513-token prompt** (up from 544 via a fused
+attention change), decode **13–24 tok/s** at acceptance 2.1–4.5, 256k context, **28.4 %** of routed
+experts resident per box, FP4. Prefix cache reported at **95–100 % hits in practice**.
+
+**RESULTS.md, one box, v0.4.0-wip** — this is the decision-relevant half:
+
+| | |
+|---|---|
+| all-resident: **6,779 experts (44.1 %), CB3, 98 GB arena** | prefill on a 5,014-token prompt **14.9 s = 337 tok/s**, reads nothing from NVMe |
+| **the same prompt through the streaming configuration** | **87 tok/s** |
+| decode by workload | 36.6 HTML / 31.8 SQL / 28.2 JS / 24.3 Python / 18.6 thinking / 17.1 story, acceptance 5.07 → 2.46 |
+
+### Four things this changes
+
+**1. On the like-for-like configuration we are not behind — we are slightly ahead.** Their *streaming*
+prefill is **87 tok/s**; ours is **95.2–104.3** across the whole long-context curve. The 1,047 headline
+is two boxes plus a fused-attention change, and the 337 is pruned-all-resident. **No one is doing
+faithful full-router streaming faster than we are.**
+
+**2. Their all-resident-vs-streaming ratio is 337/87 = 3.87×. Our layer-major oracle says 3.88× less
+prefill I/O.** Different mechanisms — they delete the reads outright and skip the unpack, we reduce
+reads by reordering — so the equality is a coincidence of ratios and **not** a prediction. But it
+sets the expectation honestly: the transpose should put streaming prefill in the neighbourhood of
+what all-resident gets, **without pruning the router**. That is the best argument yet for building it.
+
+**3. Their 44.1 % all-resident is `PRUNE_KEEP=0.44`, i.e. the trade we rejected on quality.** Our
+`expert-frequency.md` gives keep-0.44 **86.7 % mean coverage and 76.7 % in the worst layer**, and we
+measured keep-**0.40** producing degenerate output (distinct-token ratio 0.03, `<!DOCTYPE>` to the
+cap). So their 36.6 tok/s is bought with exactly the substitution we walked away from — and nobody
+has published a free-generation gate for keep-0.44.
+
+**This promotes `prune-keep-cliff` from "gate a speculative CB2 design" to "gate a measured 5.9×
+decode option that someone is already running."** If 0.44 passes a real degeneration gate, 6.24 →
+~36 tok/s is on the table and the whole streaming architecture becomes optional. If it fails, we
+have a published number to contextualise rather than chase.
+
+**4. Independent confirmation of two of our own levers.** Their prefix cache at "95–100 % hits"
+matches what we measured this morning (turn 2 costs ~21 s at any context, 2.85×/5.83×/9.12×), and
+their *adaptive expert loading* — "records what the router **wanted** and swaps the arena toward
+observed demand" — is our ds-06 adaptive LRU, shipped by someone else.
+
+### Caveats — do not cite these as settled
+
+The README (28.4 %, FP4, two boxes) and RESULTS.md (44.1 %, CB3, 98 GB, one box) describe **different
+configurations**, and the single-box table may be inherited from upstream rather than raspy135's own
+measurement. Both are marked **WORK IN PROGRESS**, the single-box table has one measured workload
+row, and none of the decode numbers is matched on prompt — which by our own
+`acceptance-is-not-quality` rule makes cross-repo tok/s comparison meaningless (their acceptance
+spans 2.46–5.07 *within one table*). Treat the 87 tok/s streaming figure and the 337/87 ratio as the
+usable content; treat 36.6 tok/s as an unvalidated pruned-mode claim.
