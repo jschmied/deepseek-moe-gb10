@@ -162,3 +162,69 @@ goes *inside* a layer and `route_s` / `load_s` / `moe_s` are per-request totals 
 §7, §10c and §19 each went wrong by measuring an aggregate and inferring a mechanism; this is the
 instrument that stops the same thing happening to the scheduler. It costs a device sync per layer,
 so it is a diagnostic and never a serving setting.
+
+---
+
+# The MTP / DSpark backlog — costed, and deferred
+
+Five async boundaries on the drafter path, proposed 2026-09-14. All five verified against
+`engine/fastdecode.py`; two of the proposer's own estimates moved on contact with the code.
+
+## The ceiling, and why it is not permanent
+
+§21 splits decode wall into **75–76 % NVMe wait, 18 % GPU-routing wait, 1.5 % bookkeeping**.
+Everything else — attention, the MoE kernel, engram, LM head, draft, seeds — is the residual **~5 %**,
+and *the entire MTP path lives inside it*.
+
+| | MTP share of wall | ceiling | decode |
+|---|---|---|---|
+| today | 5.0 % | **1.05×** | 6.24 → 6.57 tok/s |
+| after a loader pipeline running reads at the device rate | 8.3 % | **1.09×** | 10.39 → 11.34 tok/s |
+
+So **1.05× is the current-profile ceiling, not a permanent one.** If the loader removes most of the
+NVMe stall, decode wall falls to ~60 % of today (≈1.67× on its own) and the MTP share nearly doubles.
+The correct standing wording is: *deferred until after loader pipelining; current maximum benefit
+≈1.05×, but re-profile, because its share grows as expert-delivery stalls are removed.*
+
+## Order, after two corrections from the code
+
+1. **Greedy-only draft graph.** The one item that *removes* work rather than rescheduling two
+   consumers of the same GB10 resources. `_draft()` computes, per draft position, `argmax`, a full
+   `softmax` over V, `log`, a Gumbel add, a second `argmax` and a `d_probs` write — then
+   `torch.where(temp > 0, …)` throws half of it away. Five positions × ~129k vocab, and the lean
+   greedy verify path never reads `q`. Safest and largest of the set.
+2. **LM head ∥ MTP seed preparation.** `_final()` runs the head, then `main_proj`, then three `wkv`
+   + ring writes, serially; the two branches share only the final target hidden state. No arithmetic
+   changes — a pure scheduling A/B.
+3. **GPU-side acceptance → prelaunch the next draft**, removing the target → host → draft bubble.
+   The current path stays for grammar and penalties, which modify logits outside the target graph.
+4. **Pipeline seed0/1/2 against MTP0/1/2**, and benchmark the concatenated `[wkv0;wkv1;wkv2]` GEMM
+   against three concurrent small ones — at 31–33 % GPU-busy one larger GEMM plausibly wins.
+5. **`main_proj` early — demoted to near-worthless, and this is the correction that matters.** The
+   proposal called it "possibly the largest MTP overlap", conditional on the last
+   `dspark_target_layer_id` sitting well before L39. It does not: `dspark_target_layer_ids =
+   [37, 38, 39]`, and the snapshot is taken at the **top** of each such layer
+   (`fastdecode.py:321-323`, before `residual = h`). So `main_hidden` completes at the top of **L39**
+   and the overlap window is exactly one layer-block — **~4 ms of a ~160 ms step, 2.5 %.** Do it only
+   if it falls out of (4) for free, and **do not** attempt the split-`main_proj`-by-input-block
+   variant: it changes GEMM shapes and FP accumulation order for a 2.5 % window.
+6. **Routed ∥ shared inside the MTP layer.** `_draft()` serializes `out = moe_fn(...)` then
+   `out += expert_ffn(...)`, both depending only on `y`, with a fully resident drafter arena so
+   there is no NVMe correctness question — but both want the same tensor cores. Profile first.
+
+## Reporting discipline for the scheduling rewrites
+
+Adopted for the layer-major validation and everything after it: report **three separate axes**, never
+one verdict.
+
+```
+performance   TTFT / prefill tok/s / NVMe GB
+numerics      token agreement, or the first divergence
+semantics     the rare-identifier gate
+```
+
+Conflating them is how a methodology artifact reads as a model regression: the identifier gate scored
+10/14 on *both* arms of an A/B before it was fixed, and 14/14 after — the model never moved. A
+scheduling change that preserves the semantic gate and delivers the I/O reduction is acceptable even
+with minor token drift from changed execution order; that is a different decision from "bit-exact",
+and the report should let someone make it.
