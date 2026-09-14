@@ -24,7 +24,7 @@ BASE = "http://127.0.0.1:8001/v1/chat/completions"
 # decode_only carries the RAW counter names (ZERO_STATS), not the exported aliases:
 # load_wait_s is load_s there, nvme_read_s is read_s. Asking for the aliases silently
 # dropped the two biggest I/O terms from the first decode-only run.
-KEYS = ["attn_s", "moe_s", "route_s", "load_s", "lease_s", "h2d_s",
+KEYS = ["attn_s", "moe_s", "sync_s", "route_s", "load_s", "lease_s", "h2d_s",
         "read_s", "engram_s", "resolve_s"]
 
 
@@ -50,7 +50,7 @@ def run(prompt, n):
     return st, k
 
 
-WALL = {"route_s", "load_s", "resolve_s", "moe_s", "attn_s", "engram_s"}
+WALL = {"route_s", "load_s", "resolve_s", "moe_s", "attn_s", "engram_s", "sync_s"}
 # A task the model does not finish in 130 tokens. Generation length is content-limited, not
 # max_tokens-limited, and a short generation right after a restart misses ~3x more per step than
 # the steady state -- which makes its SHARES fine and its LEVELS unrepresentative.
