@@ -219,3 +219,65 @@ route, the in-graph `cudaLaunchHostFunc` Engram lookup, and the measured top-k t
   4-Spark fleets, ~3.0 on Bakeer's single box, but 5.5–5.88 counting vs 2.08–3.92 prose within one
   run. **No cross-repo tok/s comparison is meaningful unless matched on prompt** — the same lesson as
   our `acceptance-is-not-quality`.
+
+---
+
+## Field check 2026-09-14 — one new item, and the reason the others moved
+
+**No new faithful full-router one-Spark competitor.** 0xBakeer is unchanged at `8b68fdd`
+(2026-09-12); sayyidfareed's K154 has had only install/profile cleanup, no new performance work.
+Our branch is still the only one running the unpruned 384-expert router on one box with a native
+3-bit on-disk expert cache.
+
+### What is new
+
+| item | status | what it is worth to us |
+|---|---|---|
+| **SGLang #39370** | opened 2026-09-14, on `dsv4.1` not `main` | supersedes #39301/#39336; combines small-row DSpark decode with **large-prefill** tuning — packed router ids, split argmax, ≤8-row MXFP8 epilogue, parallel FlashMLA scheduling, bounded candidate graphs, tuned prefill GEMMs, Q RoPE/store, WO-A layout, mHC combine/RMSNorm. Combined numbers still pending |
+| **FlashInfer #5191** | open, author asks for GB10/SM121 validation | the DSV4.1 shared-expert projection at **M=6**: CUTLASS 15.53 µs vs native b12x **3.242 µs, 4.79×** on SM120 |
+| **FlashInfer #4955** | merged | native **NVFP4 sparse MLA on SM120/121**, 384 B/token; 1.42–1.67× prefill kernel, 1.31× decode kernel |
+| **FlashInfer #4661** | merged | FMHA v2 prefill **validated on DGX Spark / SM121**, 26 targeted tests incl. graph and async-enqueue |
+| **DeepGEMM #394** | still open | FP4 packet layout, +9.5 % at 1 token, +4.4 % at 8, ~0.3 % at 8k, bit-identical |
+
+### Two of these we can size against our own measurements
+
+**#5191's shape is in our family, and M=6 is not going to move.** Confirmed from the checkpoint:
+the shared expert is `w1 (2304, 5120)` / `w2 (5120, 2304)`, `n_shared_experts = 1`, so N = 5120 is
+our `dim`. And **M = 6 is exactly `T_VERIFY`** — the checkpoint-native verify width, which our own
+§9 shows is the optimum (width 8 is 20 % worse). So the shape they are optimising is the shape we
+will keep. Their K = 576 is 2304/4 and looks like a split-K factor rather than our raw GEMM; read
+the PR before claiming it is bit-for-bit ours.
+
+Why it is still not next: §8 measured the GPU **31–33 % busy**. A 4.79× on a GEMM that sits hidden
+under expert waits buys close to nothing until the streaming path is fixed. Same discount applies to
+#4661 and to the DeepGEMM packet layout.
+
+**#4955 is a speed item, not a memory item — and the memory case is off by an order of magnitude.**
+Measured from the allocation at `max_seq = 32768`:
+
+| | |
+|---|---|
+| `ckv` + `ik`, all four `kv_source_layers` `[2, 8, 14, 20]` | 104.9 MB |
+| window ring, 40 × 4096 × 512 × bf16 | 167.8 MB |
+| `mtp_win` | 12.6 MB |
+| **entire cache state** | **285.2 MB = 19.7 CB3 slots** |
+
+Quantizing *all* of it to NVFP4 frees ~214 MB — **15 CB3 slots, 0.4 experts per layer**. Only four
+layers hold compressed KV at all; everything above layer 20 projects its global KV from layer 20
+under CED. Any argument of the form "free a few hundred MB and hold more experts" is dead on this
+architecture, including the version of it in our own TODO. What #4955 may still be worth is the
+**1.42–1.67× prefill kernel** — though note their own serving numbers are much weaker than their
+kernel numbers (9 % at 8192/1, 3.67 % at 8192/256, steady decode 0.57 % *slower*), which is the same
+idle-GPU discount we measure.
+
+### The sequencing point worth keeping
+
+SGLang #39370's large-prefill half becomes interesting **after** layer-major, not before. Our oracle
+says the transpose removes 243 GB of redundant expert I/O from an 11.3k prefill (327.8 → 84.5 GB,
+3.88×); once that is gone, dense/attention/mHC is the majority of TTFT rather than a rounding error,
+and kernel tuning on the prefill path starts paying. Before then it is optimising the 41 % of prefill
+wall that delivery does not already own.
+
+**Order, as it stands after the night's measurements:** prompt cache validation → re-profile decode
+on the fixed counter (§10c was withdrawn) → layer-major prefill → loader pipeline → profile →
+FlashInfer SM121 prefill/MLA and #5191 → CB2/remap experiments → packet layout.

@@ -189,6 +189,20 @@ the live context is about **31**. A 500× ratio. Ours is 32× less severe than t
 at 4096 beats decode at 32768 on the same 62-token workload, the indexer width is costing us, and by
 how much. Queued as `sweep-max-seq`.
 
+> **MEASURED, AND THE ANSWER IS NO (2026-09-14).** The unpinned sweep gave 7.0 % and I wrote that up
+> as confirming the shape is live here. It is not. With `ARENA_GB` pinned at 79 GB so the swept
+> variable cannot move coverage, `MAX_SEQ` 4096 vs 32768 is **6.074 vs 6.080 tok/s** — 0.1 % across
+> an 8× range of indexer columns, with the hit rate flat at 0.8878 / 0.8885. The entire 7.0 % was
+> the arena shrinking as `max_seq` sized the `ckv`/`ik`/window caches. `ds41-measured-2026-09-13.md`
+> §17.
+>
+> So the 500× column ratio is real in the code and costs nothing measurable at ~31 live positions.
+> **#56686's fix is not a lever for us at short context**, and "lower `MAX_SEQ` for speed" is off the
+> table — it only ever worked by leaving room for experts, so raise `ARENA_GB` directly.
+>
+> What this does **not** settle: the indexer at 20k real positions, which is a prefill question a
+> 62-token benchmark cannot see. That stays open.
+
 **Observation 5 is aimed at our exact operating point and we have never measured it.** Hyper-connection
 mixing runs as three kernels per sublayer, six per layer, and costs **9.5 % of a large decode step,
 14 % of a prefill step and 19 % of a single-request step**. We are *always* single-request. Our
@@ -205,3 +219,45 @@ our own kernel mix at all — only phase-level wall and NVMe.
 Not applicable to us: observation 2 (1M-wide buffers pushing the allocator into `cudaFree` — our
 buffers are 32× smaller and we are single-request), observation 3 (DeepGEMM per-shape JIT stalls of
 3.4 s — this engine is Triton), observation 4 (NCCL all-reduce protocol — TP=1 here).
+
+
+---
+
+## What the following night changed in this survey (2026-09-14)
+
+Three entries above need amending, and one whole ranking did.
+
+**Observation 1 (indexer width) is withdrawn for our box** — see the inline correction above. It
+remains a real defect in the code shape and a real win on *their* 1M-context configuration; it is
+simply not ours.
+
+**Observation 6 (kernel-launch floor) got more important, not less.** It says a single-request decode
+step is ~1,600 dependent launches with no kernel above 3 %, i.e. ~5.5 ms on a compute-bound box. We
+still have never profiled our kernel mix. And §10c — the one measurement that claimed to decompose
+our decode step — **was withdrawn on 2026-09-14**: `_snap_prefill()` was called before the prefill
+loop, so `decode_only` reported prefill plus decode for every counter both phases touch. Re-measured
+as `step-breakdown-2`. Until that lands, *we do not have a decode breakdown at all*, and observation
+6 is the best external estimate of what one would look like.
+
+**Observation 5 (hyper-connection mixing, 19 % of a single-request step) is now the best-supported
+kernel lever we have**, precisely because it is the only one of these numbers measured on a
+single-request decode — our permanent operating point. Their fused variant failed their own
+correctness gate on fp32-vs-tf32 mixing coefficients (2e-4 → 3e-3), so it is a warning as much as a
+lever, but it is aimed at the right target.
+
+**The ranking this survey fed into has been replaced by measurement.** Everything above was reasoning
+about where time goes; the following night measured it:
+
+| lever | status |
+|---|---|
+| **Extend-only prompt cache** | **built and measured: turn 2 costs ~21 s at 5.9k / 11.4k / 22.2k tokens against 62.9 / 118.6 / 203.6 s cold — 2.85× / 5.83× / 9.12×.** TTFT becomes constant in the increment instead of linear in the context |
+| **Layer-major prefill** | **oracle measured: 3.88×** (327.8 → 84.5 GB, 74.2 % of prefill expert I/O is re-reading). Not built |
+| Loader pipeline | unbuilt; its size is now unknown again, because §10c is withdrawn |
+| Cross-layer expert prediction | measured: 32.4 % of misses at 1.5× overfetch, 7× the popularity baseline, below the 70–80 % bar (§18) |
+| Indexer width | **null** (§17) |
+| Verify-block width | **negative** — width 8 is 20 % worse (§9) |
+| CB3 expert format | costs **0.88 pp of coding top-1** (§16); not quality-neutral |
+
+**And the one thing the survey got most right**: "we have never profiled our own kernel mix at all —
+only phase-level wall and NVMe." That was true on 2026-09-13 and, after §10c's withdrawal, it is
+still true.

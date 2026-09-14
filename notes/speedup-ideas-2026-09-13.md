@@ -186,7 +186,21 @@ global top-k, which we rejected at k=5 for +0.025 nats on prose.
   calls the host function, later replays segfault). Use a host node to *signal* an existing I/O
   worker, never to hold a `pread`.
 
-## An unresolved conflict worth one A/B
+## An unresolved conflict worth one A/B — **RESOLVED 2026-09-14, in DS4.1's favour**
+
+> Measured on the engine (`sweep-block-width`, `ds41-measured-2026-09-13.md` §9): **width 8 is 20 %
+> worse than width 6**. The stored DS4.1 numbers were right and the Qwen rule does not transfer.
+>
+> The instructive part is that the *kernel* says the opposite: §6d swept the MoE kernel at the
+> distinct-expert counts the real trace gives for each width and found widening free on that axis
+> too. Both are true. What the kernel A/B held fixed was acceptance — and acceptance is what a wider
+> block actually changes. A wider verify block activates more distinct experts per layer *and*
+> accepts a smaller fraction of them, and the second term is the one that decides. §4 of the
+> measured notes had called width free on the strength of a simulator that held acceptance constant
+> while sweeping width; that is withdrawn there.
+>
+> Standing lesson, and it is the same one as `acceptance-is-not-quality`: **never sweep a speculative
+> parameter with acceptance pinned.** It is the dependent variable.
 
 Verify-width cost. Qwen **[measured by us today]**: ≈0 ms per verify position. DS4.1 **[stored,
 2026-09-11]**: block 4 → 110.7 ms, block 6 → 124.8, block 8 → 137.0, i.e. **+13.1 ms per +2
@@ -211,3 +225,44 @@ Three agents, three corrections to context I supplied:
 Every one of these was a true measurement that stopped being true. Fix: stamp `notes/data/*` with the
 vLLM version and date, and treat any figure older than the last vLLM bump as needing re-measurement
 before it enters a decision.
+
+
+---
+
+## One night later: what this survey proposed, and what it measured (2026-09-14)
+
+This note was written the morning of 2026-09-13 as a ranked list of *ideas*. A night of queue work
+turned most of them into numbers. Recorded here rather than in a new file because the value is the
+diff — which guesses survived.
+
+**The two biggest levers were not on this list at all.**
+
+| | measured | note |
+|---|---|---|
+| **Extend-only prompt cache** | turn 2 of a conversation costs **~21 s at any context** — 2.85× / 5.83× / 9.12× at 5.9k / 11.4k / 22.2k tokens | `prompt-cache.md` |
+| **Layer-major prefill** | **3.88×** less prefill expert I/O (327.8 → 84.5 GB); 74.2 % of current prefill loads are re-reads within a layer | `layer-major-prefill.md` |
+
+Neither appears above because this survey was ranking *decode* levers and a Qwen-derived TTFT rule
+that does not apply to DS4.1. The prefill side of DS4.1 is **79 % of an agent turn** and the list
+barely touches it. That is the single largest miss in this document.
+
+**Item 7 ("stop chunking the expert read") — the faithful re-run happened and it is a null.**
+Prefill chunk size was swept on an 11,344-token prompt: 1024 / 2048 / 8192 gives 174.5 / **118.5** /
+137.7 s. The shipped 2048 is already the optimum, and 8192 reads **58 % less** while being **16 %
+slower** — so the naive "bigger chunks" lever is exhausted at the shipped value. That negative is
+what produced the layer-major idea: the win has to come from *reordering*, not enlarging.
+
+**Item 4's "do NOT quantize KV" advice holds, and there is now a size argument for it too.** This
+note (and our TODO) put the 32k KV state at roughly 1 GB. Measured from the allocation: `ckv` + `ik`
+over the **four** `kv_source_layers` `[2, 8, 14, 20]` is **104.9 MB**, the window ring 167.8 MB, and
+`mtp_win` 12.6 MB — **285.2 MB in total, 19.7 CB3 slots**. The ~1 GB figure multiplied by 40 layers
+instead of 4. Quantizing the entire cache state to 4 bits would free ~214 MB, i.e. **half an expert
+per layer**. It is not a memory lever at any precision.
+
+**The "what this exercise established" section was right about the mechanism and understated the
+rate.** It said stored measurements carry no build stamp and stop being true. In the following 24
+hours, six more claims were withdrawn — §4 (verify width free), §5 (prediction worth 5–6×), §7
+(`MAX_SEQ` is the indexer), §10c (decode breakdown), the +41 % chunk-size claim, and this note's own
+~1 GB KV figure. **Five of the six were withdrawn on evidence already present in the table that
+carried them**, not on new measurement. The fix that matters is therefore not date-stamping; it is
+reading one's own anomalies as instrument failures before reaching for a physical story.
