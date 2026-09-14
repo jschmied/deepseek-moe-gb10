@@ -157,3 +157,71 @@ So his configuration and ours are **not competitors for the same job**. His is s
 decode, one narrow task at a time. Ours is the faithful full router at long context — where we
 measured 27,200 tokens at 261.3 s cold and **~22 s cached**, and where his config dies. That is the
 honest framing for both, and it means the 36.6 tok/s is not a number we are losing to.
+
+## The cliff, measured at 2000 tokens — and where the profile-free band actually sits
+
+**`prune-keep-cliff`, second run.** The 600-token pass was under-powered exactly as suspected; at
+2000 tokens the failure appears and it reproduces the stored one. Frequency-ranked keep-sets from
+`trace-unmasked-20260913`, CB3 + dense FP4 + fp8 head, the `html` prompt is the one that breaks:
+
+| `PRUNE_KEEP` | experts/layer | html words | distinct ratio | line rep | verdict |
+|---|---|---|---|---|---|
+| **0.40** | 154 | 971 | **0.056** | 1 | **DEGENERATE** |
+| **0.44** | 169 | 852 | **0.095** | 4 | **DEGENERATE** |
+| 0.60 | 230 | 552 | 0.471 | 2 | pass 5/5 |
+| 0.80 | 307 | 582 | 0.510 | 2 | pass 5/5 |
+
+*(the unpruned control was still running when this was written; its stored json is from the killed
+600-token attempt and must not be read as this run's row.)*
+
+**The cliff is between 0.44 and 0.60**, and 0.056/0.095 against the stored 0.03 is the same failure,
+found with a gate three times longer. That is the whole reason the first pass looked clean.
+
+### Does one universal keep-set remove the need for task profiles?
+
+`tools/universal_keepset.py`, same trace, both rankings. Per size: Jaccard between the two
+categories' own top-N sets, and what fraction of each category's **gate-weight mass** survives a
+single universal top-N set built on pooled traffic.
+
+| N/layer | % | Jaccard c-vs-g | shared of each | universal keeps: coding | general |
+|---|---|---|---|---|---|
+| 96 | 25 % | 0.129 | 22.9 % | 77.3 % | 55.8 % |
+| 139 | 36 % | 0.216 | 35.5 % | 85.5 % | 71.4 % |
+| **154** | 40 % | 0.248 | 39.8 % | 87.7 % | **75.7 %** (worst layer 74.0) |
+| 169 | 44 % | 0.291 | 45.0 % | 89.6 % | 79.5 % |
+| **230** | 60 % | 0.467 | 63.7 % | 95.4 % | **91.4 %** (worst layer 89.2) |
+| 307 | 80 % | 0.714 | 83.3 % | 99.1 % | 98.5 % |
+
+**Three results.**
+
+1. **The hypothesis is right.** The hot experts are strongly domain-dependent (J = 0.129 at the top
+   25 %) and a moderate set is mostly shared (J = 0.714 at 80 %). A universal set at 230/layer
+   retains 95.4 % / 91.4 % of each category's gate-weight mass against 87.7 % / **75.7 %** at 154.
+   The jump is where it was predicted to be.
+2. **The `1 − J` reading is wrong and the correction matters.** For equal-size sets the fraction of
+   one set also in the other is `2J/(1+J)`, not `1 − J`. At J = 0.70 that is **82.4 % shared, 17.6 %
+   replaced** — not 30 %. The table carries the corrected column.
+3. **Gate-weight ranking is NOT a usable saliency proxy.** Ranking by summed gate weight instead of
+   count changes almost nothing: J 0.248 → 0.265 at N = 154, and identical retention (87.7 % / 75.7 %
+   → 87.7 % / 77.6 %). So whatever contribution ranking buys upstream comes from the
+   `‖expert_e(x_t)‖₂` term, **not** from the gate weight — and that term is not in our trace. Testing
+   contribution ranking honestly needs a new trace pass that records expert output norms.
+
+### Where this leaves the all-resident idea
+
+The two measurements meet, and they meet badly for CB3:
+
+| | fits in ~83–88 GB? | survives the gate? |
+|---|---|---|
+| 154/layer (keep 0.40) | CB3 **89.0 GB** — marginal | **no** |
+| 169/layer (keep 0.44) | CB3 97.7 GB — no | **no** |
+| 230/layer (keep 0.60) | CB3 133.0 GB — no | yes |
+
+**The band that works cannot be resident, and the band that fits degenerates.** So pruned
+all-resident is closed for us *in CB3*.
+
+It is **not** closed in CB2: 220/layer is **87.9 GB** and 230/layer is 91.9 GB, against ~88 GB
+reachable with the dense/head savings. 220/layer is 57.3 % keep — above the 0.44 that degenerates and
+just under the 0.60 that passes. That is the one configuration on this box where a profile-free,
+all-resident, full-quality-band design is arithmetically possible, and it rests entirely on what
+2-bit experts cost. `cb2-nll` is queued and is now the gating measurement for the whole direction.
