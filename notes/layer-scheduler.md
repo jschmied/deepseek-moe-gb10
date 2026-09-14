@@ -289,3 +289,66 @@ them:
 **Disposition:** `DSV41_EARLY_SUBMIT` stays in the tree, off by default, modes intact. It is a
 working instrument for asking this question again after anything that changes the memory-system
 picture. It is not worth switching on for 3 %.
+
+## `IO_THREADS` under overlap: flat, and that is the evidence
+
+`iothreads-under-overlap`, 4/6/8/12 workers with `EARLY_SUBMIT=all`, three separate processes each,
+medians of starts 2–3:
+
+| io_threads | TTFT | prefill | NVMe | encoder | resolve |
+|---|---|---|---|---|---|
+| **4** | **54.2 s** | 233.2 tok/s | 75.1 GB | 49.6 s | 9.8 s |
+| 6 | 55.1 | 228.9 | 75.6 | 50.6 | 9.3 |
+| 8 | 55.6 | 227.2 | 76.2 | 50.9 | 9.0 |
+| 12 | 55.1 | 228.9 | 76.0 | 50.2 | **6.7 s** |
+
+**Tripling the workers moves `resolve` by 3.1 s and the wall by 1.4 s — a 2.7 % spread, with 4
+marginally best.** If NVMe bandwidth were the binding constraint, 4 workers would be clearly worse:
+we measured 4.14 ms per load at queue depth 1 against 2.04 at depth 4. It is not worse. The extra
+concurrency is not reaching the device.
+
+## Why the drive and the GPU are both idle: we gate our own copies
+
+`_load_into_slot` and `_load_into_slot_cached` both do, on the worker thread, **after** the NVMe read
+has landed:
+
+```python
+with torch.cuda.stream(stream):
+    stream.wait_stream(compute)      # wait for EVERYTHING queued on compute right now
+    load_slot(..., non_blocking=True)
+stream.synchronize()                 # park this worker until the copy finishes
+```
+
+`wait_stream(compute)` is a blanket barrier. Under `EARLY_SUBMIT` the main thread is queuing
+attention for chunks 1..n, so a read landing during chunk 3's attention makes its H2D wait for
+chunks 0–3's attention to **complete** — and then `stream.synchronize()` parks the worker. Twelve
+workers park behind attention, the pool stops issuing reads, and the drive goes idle. That is the
+idle NVMe and the flat `io_threads` curve, from one cause.
+
+**It was free in the design it was written for.** Chunk-major `resolve()` blocked anyway, so nothing
+was on the compute stream while loads ran; the blanket wait cost nothing. `EARLY_SUBMIT` is the
+first caller for which compute *is* running, and the conservatism becomes the thing that prevents
+the overlap. The comment states the real requirement — *"the previous layer's MoE kernel may still
+be reading the slot we are about to overwrite"* — which is a **per-slot** dependency implemented as
+a global one.
+
+**So the per-slot completion events are not a ring-size optimisation. They are the enabler.** They
+were filed under "shrink the transient ring, ≈ +0.5 tok/s"; they are actually the fix for the 4.3 s.
+
+**And the 1.03 × verdict needs softening.** "The premise fails" was wrong. The honest statement is
+that **the premise is untested**: the implementation gated its own overlap behind a barrier inherited
+from the blocking design. Whether hiding SSD reads under attention works on GB10 is still open, and
+one diagnostic arm with that wait removed settles it.
+
+## Three changes that only work together
+
+| | alone | together |
+|---|---|---|
+| per-slot completion events | the last expert arrives slightly sooner | the H2D stops waiting on unrelated attention |
+| traffic-ordered submission | irrelevant — the MoE needs the *last* expert | the most valuable experts land in the first waves |
+| partial MoE (`moe_launch_ready`) | still gated behind attention | compute starts on wave 1 instead of wave 13 |
+
+Measured support for the middle row: within a layer, ordering the **misses** by traffic puts
+**28.5 %** of the layer's blocked token-expert pairs in the first 32 reads, against **12.9 %** for the
+arbitrary expert-id order `np.unique` currently produces (51.1 % vs 26 % at 64). Notable because the
+misses *are* the cold tail — the hot experts are resident — so skew was not guaranteed to survive there.
