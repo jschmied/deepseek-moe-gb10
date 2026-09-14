@@ -12,7 +12,7 @@ it never needs the 7.4 GB shard local and never needs the checkpoint resident.
 
 Emits, per layer: distinct exponent values, order-0 entropy, and the row-range distribution.
 """
-import argparse, io, json, struct, subprocess, sys
+import argparse, io, json, os, struct, subprocess, sys
 import numpy as np
 
 ap = argparse.ArgumentParser()
