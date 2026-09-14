@@ -16,7 +16,8 @@ import argparse, io, json, struct, subprocess, sys
 import numpy as np
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--host", default="root@10.0.0.70")
+ap.add_argument("--host", default=os.environ.get("DSV41_SHARD_HOST", ""),
+                help="user@host of the shard store; set DSV41_SHARD_HOST rather than hard-coding one")
 ap.add_argument("--key", default="/home/jschmied/.ssh/id_ed25519")
 ap.add_argument("--dir", default="/mnt/bulk/hf/deepseek-ai--DeepSeek-V4.1-Flash")
 ap.add_argument("--layers", default="0-39")

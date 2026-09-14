@@ -12,7 +12,13 @@ the wrong way**. A good deal of what is here is a withdrawal.
 The engine work lives in a fork of [0xBakeer/deepseek-v41-flash-spark](https://github.com/0xBakeer/deepseek-v41-flash-spark);
 this repo is the measurements, the tools that took them, and the reasoning.
 
-**Private.** Nothing here is published unless it is moved deliberately.
+**This repository is public.** It was described as private here until 2026-09-14, which was simply
+wrong and is the kind of line that invites putting something in a repo that should not be in one.
+What actually keeps it safe is a scan before every commit —
+`git grep -nI -E "sk-[A-Za-z0-9_-]{16,}|hf_[A-Za-z0-9]{30,}|BEGIN [A-Z ]*PRIVATE KEY"` — plus the
+rule that `.sh` runners are never committed, because they are where host names, paths and
+credentials collect. Both have held: the full history scans clean, and no `.sh` has ever been added.
+Measurements, tools and reasoning belong here; checkpoints, credentials and runners do not.
 
 ## The position, as measured
 
