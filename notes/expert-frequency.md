@@ -68,3 +68,35 @@ equal size.
 
 *A rendered plot needs matplotlib, which is not in the serving venv; not installing it while the
 night queue is running through that same interpreter.*
+
+## Pruning gate, first pass (2026-09-14) — active, passing at 600 tokens, and under-powered
+
+`prune-keep-cliff`, five arms, `gen_gate.py` at 600 tokens, temperature 0.6, CB3 + dense FP4 + fp8
+head. **Every arm passed 5/5, including `PRUNE_KEEP=0.40`, which is the arm the stored record says
+failed** (`native-cb3-expert-cache.md`: distinct-token ratio 0.03, `<!DOCTYPE>` to the cap).
+
+**First question: was pruning even on?** Yes, and I checked rather than assumed after initially
+concluding the opposite from the arena lines. `/health` reports `prune_keep = 0.4` on a direct
+pruned start, and the five arms produce **different outputs** (keep-0.40 essay 478 words at 0.617
+distinct; keep-0.60 essay 432 at 0.664; python 260 / 220 / 156 / 150 words across 0.40 / 0.44 / 0.60
+/ 0.80). So the router really is restricted and the run is not void.
+
+**Second question, and it is why the result cannot yet be believed: 3 of 5 prompts hit the token cap
+in every arm.** The stored failure is described as degenerating *long* generations. A gate that
+truncates at 600 tokens stops before the failure mode it is looking for has room to appear. Re-queued
+at **2000 tokens**.
+
+**Third thing, worth recording separately: keep 0.40 did not go all-resident.** The keep set is 6,144
+experts = 88.8 GB against an auto arena of 83.0 GB / 5,744 slots, so the engine pruned the router and
+kept streaming — `resident_expert_pct` stayed at 37.4 % in every arm. That is the same arithmetic as
+pruned-all-resident and a completely different speed, so none of these arms says anything about the
+337 tok/s prefill or 36.6 tok/s decode that raspy135 reports for that mode. **Only keep ≤ 0.44 can be
+all-resident at all** on this box (0.44 needs 97.7 GB, 0.55 needs 122.1, 0.70 needs 155.4), and even
+0.44 needs the arena pinned above its auto value.
+
+**Harness note.** The first attempt failed all five arms with "server never came up", and the real
+error was in `logs/server.log`: *"pruned mode needs the per-layer trace npz files next to
+trace_stats"*. `.env` pointed at `trace-full-20260910`, whose `trace/` the streaming trace driver
+deletes layer by layer as it runs. Stats regenerated for `trace-unmasked-20260913`, which still has
+all 40. **The keep set therefore comes from a different trace than the stored failure used**, which
+is a second live hypothesis for the disagreement and should be stated whenever this result is quoted.
