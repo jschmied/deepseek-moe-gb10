@@ -118,3 +118,36 @@ turn 1 — which repopulates it, so turn 2 of the "cold" arm resumes too. Compar
 against "cold" turn 2 therefore compared two cached turns and printed **1.04–1.07×**: a believable
 small number that would have read as "the cache barely helps at long context" and buried the result.
 The genuinely cold rows (`reused 0`) were in the same table. Fixed in the tool.
+
+## It composes with layer-major (2026-09-14)
+
+The first layer-major commit took exactly one checkpoint, at the resume point — position 0 on a
+first turn — and `_resume_point` rejects `start < MAX_CHUNK`. So `DSV41_LAYER_MAJOR=1` **silently
+disabled this cache**: no error, no slowdown, just no resume, ever. Since the cache is worth more on
+agent traffic than the transpose is (154 s → ~21 s per turn against 154 → 72), shipping layer-major
+as a default would have traded the larger lever for the smaller one invisibly.
+
+Fixed by assembling the checkpoints inside the pass (fork `dc74db5`): `Caches.checkpoint(n)` wants
+every layer's compressor state as of *n*, and chunk-major can take it in one call because the whole
+stack is at *n* at that moment — layer-major never is, since layer L is at the end of the prompt
+while L+1 is still at the start. So each layer's `pending` is recorded as it crosses each boundary
+and the checkpoints are assembled at the end.
+
+**Measured with both features on** (`layer-major-cache-ab`):
+
+| turn-2 tokens | cold prefill | cached | | reused |
+|---|---|---|---|---|
+| 5,955 | 42.4 s | **21.6 s** | 1.96× | 4,096 |
+| 11,383 | 57.7 s | **20.2 s** | 2.86× | 10,240 |
+| 22,249 | 91.8 s | **22.2 s** | 4.14× | 20,480 |
+
+**`reused` is non-zero at every length**, which is the assertion the fix exists for. And the *cold*
+column is layer-major working underneath: 91.8 s at 22k against the **203.6 s** the same arm
+measured chunk-major. So the two compose as intended —
+
+* **cold turn**: 203.6 → 91.8 s, from the transpose;
+* **every later turn**: **~21 s**, from the cache, and still flat in context.
+
+The cached column is unchanged from the cache's own measurement (22.0 / 20.3 / 22.3 s), which is the
+right outcome: the cache resumes past the prefill either way, so layer-major cannot help a turn that
+barely prefills — and, now, cannot hurt it either.
