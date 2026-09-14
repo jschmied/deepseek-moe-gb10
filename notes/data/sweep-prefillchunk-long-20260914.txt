@@ -1,0 +1,13 @@
+  sweeping DSV41_PREFILL_CHUNK over ['1024', '2048', '8192'], 3 runs of 512 tokens each
+      03:17:48 [engine] CUDA free 89.4 GB of 130.6; host MemAvailable 110.0 GB; arena 82.8 GB = 5730 cb3 expert slots of 14.45
+  DSV41_PREFILL_CHUNK=1024   ok -> prefillchunk-long-1024.log
+      8000       11344    174.5       65.0     530.8     46.8    1.53
+      03:22:51 [engine] CUDA free 89.4 GB of 130.6; host MemAvailable 109.7 GB; arena 82.6 GB = 5711 cb3 expert slots of 14.45
+  DSV41_PREFILL_CHUNK=2048   ok -> prefillchunk-long-2048.log
+      8000       11344    118.5       95.7     331.1     29.2    1.47
+      03:26:59 [engine] CUDA free 92.1 GB of 130.6; host MemAvailable 109.8 GB; arena 82.6 GB = 5717 cb3 expert slots of 14.45
+  DSV41_PREFILL_CHUNK=8192   ok -> prefillchunk-long-8192.log
+      8000       11344    137.7       82.4     139.2     12.3    1.43
+
+  3 arms measured, 0 failed
+== ALL DONE ==

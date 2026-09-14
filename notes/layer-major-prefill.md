@@ -134,3 +134,42 @@ case now rests entirely on that half, which is the half the probe could not meas
 Worth noting the shape of the surprise: this is the second time today that a "redundant" operation
 turned out to be load-bearing. The first was `DSV41_CB3_PREFILL`, where running the CB3 kernel
 directly — and skipping the unpack entirely — cost 34 % of TTFT.
+
+---
+
+## The chunk sweep, on a prompt long enough to see it — and this is the case for the transpose
+
+`sweep-prefill-chunk-long`, 11,344-token prompt, 3 arms:
+
+| `DSV41_PREFILL_CHUNK` | chunks | TTFT | NVMe | MB/prompt-token | GB per chunk |
+|---|---|---|---|---|---|
+| 1024 | 12 | 174.5 s | **530.8 GB** | 46.8 | 44.2 |
+| 2048 (default) | 6 | **118.5 s** | 331.1 | 29.2 | 55.2 |
+| 8192 | 2 | 137.7 s | **139.2 GB** | 12.3 | 69.6 |
+
+**Two things, and they point opposite ways.**
+
+**NVMe is near-linear in chunk *count*** — 44/55/70 GB per chunk across a 12× range of chunk size.
+That is the re-read made visible: **74 % of prefill I/O at chunk 1024 is the same experts being read
+again**, and it falls to 58 % less at 8192. The premise behind the layer-major transpose is now
+measured rather than derived.
+
+**But TTFT is non-monotonic and the default is already optimal.** 8192 reads 58 % less than 2048 and
+is **16 % slower**. So the compute cost of a large chunk overtakes the I/O it saves somewhere just
+past 2048, and the naive lever — "use bigger chunks" — is exhausted at the shipped value. 0xBakeer's
+`MAX_CHUNK = 2048` is sitting on the optimum.
+
+**Which is precisely the argument for layer-major.** The transpose gets the I/O saving by *reordering*
+rather than *enlarging*: each layer's expert population is read once per prompt while the chunk stays
+at the compute-optimal 2048. Extrapolating the GB-per-chunk line to one effective chunk gives ~70 GB
+against the default's 331 — **~4.8× less prefill I/O at no compute penalty**.
+
+That reframes the reuse probe's negative result. The probe measured the **unpack** half on resident
+experts and found unpack-once 33 % slower; this measures the **I/O** half and finds 74 % of it
+redundant. Both halves of the original proposal are now measured, and they disagree: the unpack is
+load-bearing and should stay batched, the re-reads are waste and are worth ~4.8×. A transpose that
+keeps the 32-expert unpack batching *inside* a layer-major loop takes the second without losing the
+first.
+
+*(The decode column, 1.43–1.53 tok/s, is 64-token generations again — not comparable to the 6.24
+reference, same caveat as §14 of the serving profile.)*
