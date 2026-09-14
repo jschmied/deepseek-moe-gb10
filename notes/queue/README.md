@@ -99,3 +99,30 @@ does not help — the first process was already past it and the kill came from o
 **The general rule this earns:** a long job's liveness must be readable from its log alone. If the
 only way to tell a running job from a dead one is `pgrep`, the harness is under-instrumented — and
 `pgrep` is exactly what is not available when reading the log an hour later.
+
+## 2026-09-14: switching the prompt cache on invalidated three harnesses in one afternoon
+
+The extend-only prompt cache became the default at 17:45. Within an hour it had silently broken
+three measurements, each time by making a result look **better**, which is the dangerous direction.
+
+1. **`test_layer_major.py`** runs both arms on the same prompt in one process. Arm 2 resumed arm 1's
+   context instead of prefilling and reported **37.2 s → 6.5 s** — a resumed turn dressed as a
+   transpose. I nearly wrote it up as an early-submission win.
+2. **`early-submit-ab`, first attempt.** I knew about (1) and designed around it by giving each start
+   a *different prompt length*. That does not work: `longctx_profile` builds its prompt as the first
+   N words of one word list, so a **longer prompt is a strict extension of a shorter one** and the
+   cache resumes nearly all of it. Starts 2 and 3 read 770–850 tok/s against start 1's 194.
+3. The same mechanism is latent in any harness that repeats a prompt, extends one, or runs two arms
+   in one process.
+
+**The rule:** a harness that measures **prefill** must set `DSV41_PROMPT_CACHE=0`, not merely vary
+the prompt. Varying length is not enough; only a prompt that diverges at position 0 defeats a prefix
+cache, and that is a weaker guarantee than turning it off.
+
+**And the assertion is cheaper than the reasoning.** `test_layer_major.py` now *fails* if either arm
+reports `prompt_cache_reused`. Any prefill harness should do the same — the engine already exports
+the field, so the check is one line and it cannot be reasoned away.
+
+**Why this class is worth a standing entry:** every one of the three failures produced a plausible,
+attractive number. A default that makes measurements look worse gets caught in minutes; one that
+makes them look better gets published.
