@@ -409,3 +409,44 @@ Still standing, because neither overlaps a copy with a kernel:
 * **layer-major itself**, which *removes* 5.4× of the copies rather than rescheduling them. That is
   the lever that worked, and the reason is now clear: on a shared memory system the only reliable win
   is moving fewer bytes.
+
+### Correction, same evening: it is not bandwidth, and I named a mechanism again without isolating it
+
+The section above concludes *"capped by memory bandwidth, not by scheduling"*. The arithmetic does
+not support that, and I should have done it before writing the word.
+
+Per encoder layer, during the FFN phase (12,624-token prompt, 21 layers, 17.9 s of FFN):
+
+| | |
+|---|---|
+| expert weights read from the arena | 5.23 GB |
+| `parts` `[T·K, 5120]` fp32 | 1.55 GB |
+| `h` `[T·K, 2304]` bf16 | 0.35 GB |
+| `y` | 0.13 GB |
+| **total, over 0.85 s per layer** | **7.26 GB → ~9 GB/s** |
+
+The overlapping H2D copies add 4.99 GB per layer, ~6 GB/s. **Combined that is ~6 % of this box's
+measured 240 GB/s stream rate.** Nothing here is bandwidth-saturated, so "memory bandwidth" is the
+wrong label for a 32 % FFN slowdown.
+
+**What it could be, none of it isolated:**
+
+* **L2 pollution** — each copy streams 13.77 MB through the cache hierarchy, which is large against
+  any plausible L2, and the MoE kernel's working set is evicted between tiles.
+* **Memory-controller latency interference** rather than throughput — concurrent copy-engine and SM
+  traffic raising each other's access latency well below saturation.
+* **Driver-level contention** — twelve worker threads each doing `stream` operations and a
+  `synchronize`, delaying the main thread's kernel launches. Weak support: `io_threads=4` was
+  marginally the *best* arm.
+
+**That this is unresolved changes the conclusion.** "Capped by bandwidth" would be a hardware wall.
+L2 pollution or launch contention are implementation problems with implementation answers — a
+non-temporal or chunked copy path, fewer workers, a different staging route. So the loader-pipeline
+family is **not** closed; it is blocked on a mechanism we have not identified, and identifying it
+needs a profiler rather than another A/B.
+
+**And this is the second time this evening I promoted a plausible mechanism to an explanation.**
+First `wait_stream`, refuted by its own diagnostic; then "bandwidth", refuted by five minutes of
+arithmetic I could have done first. The rule I keep re-deriving: a mechanism is a hypothesis until
+something measures *it*, not its consequence. The consequence here — copies slow the FFN by 32 % —
+is solid and reproduces across three processes. Everything I have said about *why* is not.
