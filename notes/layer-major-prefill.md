@@ -378,3 +378,48 @@ Both found by a failing assert or by reading the code, not by guessing:
 
 Three separate processes per arm for the timing numbers (these are one start each); the free-generation
 and token-integrity gates; and a long-context arm at 27k where `sh.candidates` holds ~470 MB.
+
+## Validated (2026-09-14) — **2.06× TTFT on real text**, three processes per arm, gates neutral
+
+`layer-major-validate`: a fresh server per arm (no shared arena warmth), three separate processes
+per arm, `longctx_profile`'s prose filler rather than the build test's repeated sentence, 16,776-token
+prompt.
+
+| | TTFT | prefill | NVMe | MB/prompt-token |
+|---|---|---|---|---|
+| chunk-major | 179.9 / 151.0 / **154.0** s | 93.3 / 111.1 / **108.9** tok/s | 515 / 433 / **446** GB | 30.7 / 25.8 / 26.6 |
+| **layer-major** | 84.4 / 74.6 / **72.1** s | 198.7 / 224.9 / **232.7** tok/s | 93.6 / 80.1 / **79.5** GB | 5.6 / 4.8 / 4.7 |
+| median ratio | **2.06×** | **2.07×** | **5.56×** | **5.5×** |
+
+**The build measurement understated this, and I had the reason backwards.** I wrote that the
+repeated-sentence prompt was "close to the best possible case for the transpose" and warned the
+1.45× was inflated. It was the opposite: that prompt made the **baseline** cheap — 7.3 MB per prompt
+token against 26.6 here, because repeated text touches few distinct experts — so there was less to
+remove and the ratio compressed. On real text the transpose is worth **2.06×**, not 1.45×.
+
+It also beats the delivery bound the oracle derived (≥1.44–1.57×), for the reason that note already
+flagged: the bound assumed queue depth 4, and the engine does not reach it.
+
+**Both quality gates are neutral, which is the point of running them.**
+
+| gate | chunk-major | layer-major |
+|---|---|---|
+| degeneration, 2000 tokens | 5/5 pass | 5/5 pass |
+| rare-identifier integrity | 10/14 | 10/14, **the same four** |
+
+### The 4 of 14 is my gate, not the model
+
+Identical in both arms, and every one reports `mangled: -` — the identifiers are **absent, not
+corrupted**. All four are dotted module paths (`itertools.groupby`, `collections.OrderedDict`,
+`numpy.ascontiguousarray`, `torch.nn.functional.softmax`), and `from itertools import groupby`
+followed by a bare `groupby(...)` is correct Python. The gate demanded the dotted form verbatim.
+
+Fixed: a dotted path now passes if the tail appears together with an import naming the module. The
+camelCase and underscore cases — `clearTimeout`, `XMLHttpRequest`, `requestAnimationFrame`,
+`pthread_mutex_trylock`, `__builtin_expect`, `O_DIRECT` — carry the actual subword-boundary test and
+**all passed in both arms**. So on the failure mode 0xBakeer reported for frequency-ranked pruning,
+this configuration is clean, and the transpose does not touch it.
+
+Worth keeping as a method note: the gate produced a believable 71 % score that would have read as a
+real quality finding. What exposed it was the A/B — *the same four* failing on both sides of a change
+that should have moved them if they were real.

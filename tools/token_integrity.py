@@ -59,7 +59,22 @@ def main():
         except Exception as e:
             print(f"  {i:>6}  REQUEST FAILED: {type(e).__name__}: {e}", flush=True)
             return 2
-        missing = [w for w in idents if w not in text]
+        # A dotted path is not a corruption test on its own: `from itertools import groupby`
+        # followed by a bare `groupby(...)` is correct Python, and the first run of this gate scored
+        # four such cases as failures in BOTH arms of an A/B where nothing had changed. Accept the
+        # dotted form, or the tail plus an import naming the module. The camelCase and underscore
+        # cases carry the actual subword-boundary test and need no such allowance.
+        missing = []
+        for wd in idents:
+            if wd in text:
+                continue
+            if "." in wd:
+                mod, tail = wd.rsplit(".", 1)
+                root = mod.split(".")[0]
+                if tail in text and (f"import {tail}" in text or f"import {root}" in text
+                                     or f"from {mod}" in text):
+                    continue
+            missing.append(wd)
         # a near-miss is the interesting case: the identifier is there but case- or
         # separator-mangled, which is exactly the reported corruption
         near = []
