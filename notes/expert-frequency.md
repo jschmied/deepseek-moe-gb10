@@ -225,3 +225,40 @@ reachable with the dense/head savings. 220/layer is 57.3 % keep — above the 0.
 just under the 0.60 that passes. That is the one configuration on this box where a profile-free,
 all-resident, full-quality-band design is arithmetically possible, and it rests entirely on what
 2-bit experts cost. `cb2-nll` is queued and is now the gating measurement for the whole direction.
+
+## Per-layer bit sensitivity: **no signal in weight space** (2026-09-14)
+
+`cb-perlayer-sensitivity`, all 40 layers, hottest 24 experts each, activation-weighted by summed
+gate usage from the unmasked trace. Relative requantization error against the FP4 weights the
+checkpoint actually holds:
+
+| | min | max | spread |
+|---|---|---|---|
+| err @ 3 bits | 0.0450 | 0.0475 | **1.06×** |
+| err @ 2 bits | 0.1369 | 0.1458 | **1.06×** |
+| ratio err2/err3 | 2.985 | 3.068 | — |
+| **marginal cost of the third bit** (err2 − err3) | 0.0919 | 0.0983 | **1.07×** |
+
+**Every layer costs the same.** The third bit is worth +0.0919 to +0.0983 of relative error
+*everywhere*, a 7 % spread end to end, and the only mild outlier is layer 39 (+0.0983, and it is the
+last layer). There is no cheap layer to raid and no expensive layer to protect.
+
+**So the idea does not survive on this metric.** Moving bits between layers cannot help if the bits
+cost the same in every layer. `ds41-measured-2026-09-13.md` §20's uniform CB2 result stands as the
+price of 2-bit experts, and the all-resident direction stays closed.
+
+**And the control is interesting.** MiaAI-Lab's EXL3 build puts K=2 on layers **18–22** specifically.
+Ranked by marginal cost here, those layers come out 2nd, 5th, 15th, 10th and 22nd of 40 — i.e.
+**scattered, not clustered at the cheap end**. If their choice were explained by weight-space error
+they would occupy the first five ranks. They do not.
+
+**What that does and does not license.** It does not say their choice is wrong — it says *this
+proxy cannot see whatever they used*. Trellis quantizers in that family select on output or
+curvature sensitivity (Hessian/gradient-weighted), not on raw weight distance, and those are
+different quantities: a layer whose weights quantize cleanly can still sit where the network is most
+sensitive to the perturbation. Measuring that needs per-layer output sensitivity — one forward pass
+per layer with a perturbation, not a weight comparison — which is a real experiment and not this one.
+
+**Cost of finding out: ~100 minutes and no trace.** The value was in *not* spending a 150-minute
+paired trace on an assignment chosen by a metric that turns out to be flat. Recorded as a negative
+with the data in `notes/data/perlayer-quant-error.json`.
