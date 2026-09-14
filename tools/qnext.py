@@ -22,7 +22,8 @@ Rules it enforces:
 Queue item:
   {"name":"cb3-tier0", "cmd":["python3","/opt/llm/runners/cb3_random.py"],
    "needs_user":false, "prereqs":[], "expect_min":15, "note":"what it decides",
-   "guard":"curl -sf -m 3 http://127.0.0.1:8001/health"}   # optional: state, not a finished job
+   "guard":"curl -sf -m 3 http://127.0.0.1:8001/health",   # optional: state, not a finished job
+   "pre":"cd ~/repo && ./stop.sh && ./start.sh"}  # optional: ALWAYS runs, unlike `recover`
 """
 from __future__ import annotations
 import argparse, fcntl, json, os, subprocess, sys, time
@@ -176,6 +177,13 @@ def main() -> int:
     job["state"] = "running"; job["started"] = time.strftime("%F %T")
     lg = f"{LOGDIR}/{job['name']}.log"; job["log"] = lg
     save(q)
+    # `pre` runs ALWAYS, unlike `recover` which only fires when the guard FAILS. A code fix never
+    # reaches a healthy server otherwise: the guard is a health check, it passes, recover is
+    # skipped, and the job measures the old build. That cost a whole re-measurement on 2026-09-14
+    # (step-breakdown-2) and the job's own note asserted the opposite.
+    if job.get("pre"):
+        log(f"   pre: {job['pre'][:90]}")
+        subprocess.run(["bash", "-lc", job["pre"]], capture_output=True, text=True, timeout=900)
     log(f"== qnext: {job['name']} ==  {job.get('note','')}")
     log(f"   {' '.join(job['cmd'])}\n   log {lg}")
 
