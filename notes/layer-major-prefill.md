@@ -266,3 +266,52 @@ transpose. Layer-major is a prefill lever only — which is the right place for 
 **Verdict: build it.** 3.88× on the dominant phase, bit-exact in intent (the same weights, a
 different visiting order), and it needs no residency — each 32-expert batch is read once, used by
 every chunk, discarded.
+
+## At 27k the oracle is **9.38×** — and the floor does not move (2026-09-14)
+
+`route-log-oracle-27k`, one 27,200-token prompt, same recorder and replay:
+
+| | loads | GB | vs current |
+|---|---|---|---|
+| current (engine today) | 56,096 | **772.7** | 1.00× |
+| layer-union oracle | 5,978 | **82.3** | **9.38×** |
+| layer-union, cold arena | 9,437 | 130.0 | 5.94× |
+
+**Re-read fraction 89.3 %**, against 74.2 % at 11.3k. And the cross-check holds: the oracle's
+"current" 772.7 GB lands on the engine's own measured **787.6 GB** of NVMe for the same request
+(98 %), so the recorder is still seeing what the drive does.
+
+**The result that matters is not 9.38× — it is that the layer-union column barely moved.**
+
+| prompt | chunks | current | layer-union | ratio |
+|---|---|---|---|---|
+| 11,344 tok | 6 | 327.8 GB | **84.5 GB** | 3.88× |
+| 27,200 tok | 14 | 772.7 GB | **82.3 GB** | 9.38× |
+
+Current I/O grows 2.36× with the prompt; the layer-union floor **falls slightly**, 84.5 → 82.3 GB.
+That is what the structure predicts and it is worth stating plainly: the floor is bounded by the
+number of *distinct* `(layer, expert)` pairs a prompt touches, which saturates near the full
+15,360 — not by chunk count. So **layer-major makes prefill expert I/O essentially
+context-independent**, and the speedup grows linearly with prompt length because the thing it
+replaces does.
+
+Extrapolating the same way the engine's own curve runs (TTFT ≈ tokens/104 + 15 s), the ratio at
+32k would be ~11×, and the floor still ~82 GB.
+
+**Delivery bound** at the measured CB3 latencies, against a measured TTFT of **280.5 s**:
+
+| | QD1 | QD2 | QD4 |
+|---|---|---|---|
+| current | 232.2 s | 125.1 s | **114.4 s** |
+| layer-union | 24.7 s | 13.3 s | **12.2 s** |
+
+So at QD4 delivery is 41 % of the wall — the same share as at 11.3k — and the transpose takes it to
+4 %: **TTFT 280.5 → ~178 s, 1.57×, on delivery alone**, with the rest belonging to the loader
+pipeline.
+
+*(Log shape check: 305 prefill `resolve()` calls, which is 21 encoder layers × 14 chunks plus one
+replay pass over layers 21–39, not the 40 × 14 a naive reading would expect. CED runs the encoder
+half chunked and the decoder half once over the window tail, so the decoder layers have no re-read
+to remove — the 89.3 % is all in the encoder. The decode half of the log came back empty at 16
+output tokens; the recorder's buffer is flushed on close and the job stops the server, so short
+tails can be lost. Not load-bearing here.)*
