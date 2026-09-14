@@ -1,0 +1,9 @@
+   target  prompt tok   TTFT s  tok/s pre   NVMe GB   MB/tok  decode
+     2000        2922     44.1       66.3     113.6     38.9    1.43
+     8000       11344    119.2       95.2     345.9     30.5    1.97
+    16000       22210    213.9      103.8     598.8     27.0    2.11
+Traceback (most recent call last):
+  File "/home/jschmied/git/deepseek-moe-gb10/tools/longctx_profile.py", line 54, in <module>
+    rows.append(dict(target=n, prompt_tokens=pt, ttft=ttft, prefill_tok_s=pt / ttft,
+                                                                          ~~~^~~~~~
+TypeError: unsupported operand type(s) for /: 'int' and 'NoneType'

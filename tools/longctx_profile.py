@@ -50,6 +50,11 @@ for n in LENS:
                     ttft = time.time() - t0; r_at_ttft = dev_read()
     tot = time.time() - t0
     pt = (st or {}).get("prompt_tokens", n)
+    if ttft is None:
+        # no content ever arrived -- almost always the prompt exceeding max_seq. Report and carry on
+        # rather than crashing the whole sweep on its last arm, which is what the first run did.
+        print(f"  {n:>7} {pt:>11}  NO OUTPUT (prompt over max_seq, or server error)", flush=True)
+        continue
     pre_gb = (r_at_ttft - r0) / 1e9
     rows.append(dict(target=n, prompt_tokens=pt, ttft=ttft, prefill_tok_s=pt / ttft,
                      prefill_nvme_gb=pre_gb, mb_per_prompt_tok=pre_gb * 1000 / pt,

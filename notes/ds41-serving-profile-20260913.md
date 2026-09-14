@@ -66,3 +66,42 @@ with hit rate 0.8977 against 0.8959. Nothing was destroyed.
 
 The real lesson is about the metric, not the engine: **decode tok/s measured over a short generation
 is mostly a prefill measurement.** Any comparison has to fix the output length.
+
+---
+
+## The long-context curve, measured — and what the prompt cache is worth
+
+`longctx-profile`, 2026-09-14. Three arms landed; the fourth asked for ~44k tokens against
+`MAX_SEQ` 32768 and produced no output, crashing the tool on a `None` TTFT (guarded now — it reports
+and continues).
+
+| prompt tokens | TTFT | ms per prompt token | prefill rate | NVMe | MB per prompt token |
+|---|---|---|---|---|---|
+| 2,922 | 44.1 s | 15.1 | 66.3 tok/s | 113.6 GB | 38.9 |
+| 11,344 | 119.2 s | 10.5 | 95.2 | 345.9 | 30.5 |
+| 22,210 | **213.9 s** | 9.6 | 103.8 | **598.8 GB** | 27.0 |
+
+**Prefill gets more efficient with length** — 66 → 104 tok/s, 38.9 → 27.0 MB per prompt token — which
+is the chunking and the expert working set amortising. But the absolute cost does not care: a
+**22k-token prompt costs 214 seconds and 599 GB before the first token appears.**
+
+### What an extend-only prompt cache is worth, from these numbers
+
+A three-turn agent conversation at ~11k context, 200 tokens out per turn, at the measured 6.24 tok/s:
+
+| | |
+|---|---|
+| today | 3 × 119 s prefill + 3 × 32 s decode = **454 s** |
+| extend-only cache | 1 × 119 s + 2 × ~2 s + 3 × 32 s = **219 s** |
+| | **2.1× on the whole conversation** |
+
+And it grows with both turn count and context: at 22k context the same three turns go from 738 s to
+262 s, **2.8×**. Every decode lever measured tonight — the arena curve at +65 % steps/s being the
+largest — acts only on the 32 s per turn that decode occupies.
+
+That is the case for putting the prompt cache first, now with a measured curve under it rather than
+the single 11k point it rested on before.
+
+**One caveat on the decode column** (1.43 / 1.97 / 2.11 tok/s): those generations were 64 tokens, so
+prefill misses amortise over almost nothing — the same trap as §10. They are not comparable to the
+6.24 reference and should not be read as a context-length decode curve.
