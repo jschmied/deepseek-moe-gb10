@@ -69,3 +69,21 @@ changes what a request computes.
 * `engine/test_prompt_cache.py` — two turns of a real conversation; turn 2 warm must emit the same
   tokens as turn 2 on a cleared engine, and must actually have resumed (a test that silently takes
   the cold path would pass for the wrong reason).
+
+## First measurement (2026-09-14, `engine/test_prompt_cache.py`)
+
+Real two-turn conversation, greedy, CB3 + `DSV41_DENSE_FP4=attn,wo_a` + fp8 head, `max_seq=16384`:
+
+| turn 2 | reused | prefilled | prefill | NVMe |
+|---|---|---|---|---|
+| warm (resumed) | 2048 of 3416 | 1368 | **10.19 s** | 28.78 GB |
+| cold (cache cleared) | 0 | 3416 | 16.32 s | 27.71 GB |
+
+**18 tokens identical warm and cold** — the correctness bar. TTFT **1.60×** on a 3.4k-token turn,
+which is the *worst* case for this design: the resume point is a 2048 chunk boundary, so a short
+turn throws away most of what it could have reused. The win grows with context — a 22k turn resumes
+within 2176 tokens of the end instead of re-prefilling 22k.
+
+NVMe barely moves (28.8 vs 27.7 GB) because the expert LRU is shared between the two arms; the warm
+arm reads *more* per prefilled token, not less. So this is a compute win at the arena coverage we
+run, not an I/O win. The I/O half is the layer-major transpose's job, and the two compose.
