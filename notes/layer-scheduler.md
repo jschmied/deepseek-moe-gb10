@@ -228,3 +228,64 @@ Conflating them is how a methodology artifact reads as a model regression: the i
 scheduling change that preserves the semantic gate and delivers the I/O reduction is acceptable even
 with minor token drift from changed execution order; that is a different decision from "bit-exact",
 and the report should let someone make it.
+
+---
+
+# P0 MEASURED: early submission is ~1.03×, and the premise does not hold
+
+`early-submit-abcd`, four arms × three separate processes on separate servers, prompt cache off,
+12,624-token prompt. Medians of starts 2–3 (start 1 is the cold outlier in every arm).
+
+| arm | TTFT | encoder total | attn+route | resolve | ffn |
+|---|---|---|---|---|---|
+| **A** `off` | 57.0 s | 51.8 s | 18.9 s | **15.1 s** | 17.9 s |
+| **B** `synconly` | 57.8 s | 52.7 s | 21.1 s | 13.6 s | 18.0 s |
+| **C** `all` | **55.2 s** | **50.2 s** | 25.4 s | **6.7 s** | 18.1 s |
+| **D** `chunk0` | 55.7 s | 50.7 s | 21.6 s | 10.9 s | 18.1 s |
+
+## The attribution
+
+| | attn+route | encoder total |
+|---|---|---|
+| **B − A** — the per-chunk route-id D2H barrier and bookkeeping, alone | **+2.2 s** | +0.8 s |
+| **C − B** — genuine overlap contention, on top of the barriers | **+4.3 s** | −2.4 s |
+| **D − A** — one barrier, ~85 % submitted early | +2.8 s | −1.1 s |
+
+So the external review's hypothesis was **partly right**: the seven new barriers really do cost
+**2.2 s** of the 6.5 s that all-chunk submission added to `attn+route`. But they are only a third of
+it. The other **4.3 s is real contention** — the reads and the attention genuinely compete on this
+part, which has one memory system for both.
+
+## And `chunk0` is worse than `all`, which was the opposite of the prediction
+
+The argument for `chunk0` was that chunk 0 alone names 85.4 % of a layer's expert set, so one
+barrier should buy nearly all the overlap. It does buy most of it — but the 15 % tail it leaves
+behind costs more than the six barriers it saves: resolve is **10.9 s against `all`'s 6.7 s**, and
+the totals come out 50.7 vs 50.2 s. The barriers were never the dominant term.
+
+## The verdict, and it is a negative
+
+**Encoder total 51.8 → 50.2 s. TTFT 57.0 → 55.2 s. About 1.03×** — and my earlier single-run figure
+of 1.07× was optimistic, as single runs on this test tend to be.
+
+The mechanism is not in doubt: resolve falls **15.1 → 6.7 s**, 56 % of the stall genuinely removed.
+It is the *premise* that fails. Hiding an SSD read under attention on GB10 costs about as much as it
+saves, because both want the same unified memory. **"Overlap the I/O with compute" is not free here,
+and this is the first direct measurement of that on this box.**
+
+## What it means for the rest of the plan
+
+This is the cheapest member of the loader-pipeline family and the one with no quality question
+attached — and it returns 3 %. That should be priced into the rest before anyone spends a day on
+them:
+
+* the **75 % NVMe wait** in decode is real, but the ~2.2× headroom implied by 3.2 GB/s of an
+  available 5.0–6.8 assumed overlapping is free. On this evidence it is not;
+* **stage C** (FFN executing as expert batches land) overlaps *more* I/O with *more* compute, so it
+  inherits this contention rather than escaping it;
+* the **shared-expert overlap** is the exception worth keeping: it overlaps compute with compute, not
+  with I/O, so this result does not bear on it.
+
+**Disposition:** `DSV41_EARLY_SUBMIT` stays in the tree, off by default, modes intact. It is a
+working instrument for asking this question again after anything that changes the memory-system
+picture. It is not worth switching on for 3 %.
