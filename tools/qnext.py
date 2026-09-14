@@ -187,8 +187,13 @@ def main() -> int:
         # wedged process.
         limit = 60 * 3 * int(job.get("expect_min", 60))
         try:
-            rc = subprocess.run(job["cmd"], stdout=fh, stderr=subprocess.STDOUT,
-                                timeout=limit).returncode
+            # PYTHONUNBUFFERED: a job whose first print() has no flush=True leaves a ZERO-BYTE
+            # log while it runs, which is indistinguishable from a job that died on its first
+            # instruction. That ambiguity cost a diagnosis on 2026-09-14 (longctx-profile vanished
+            # with an empty log and nothing to read). Unbuffered output is worth more here than
+            # the syscalls it costs.
+            rc = subprocess.run(job["cmd"], stdout=fh, stderr=subprocess.STDOUT, timeout=limit,
+                                env=dict(os.environ, PYTHONUNBUFFERED="1")).returncode
         except subprocess.TimeoutExpired:
             fh.write(f"\n== VOID ==  killed by qnext after {limit // 60} min "
                      f"(3x expect_min={job.get('expect_min')})\n")

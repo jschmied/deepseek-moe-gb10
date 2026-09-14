@@ -22,7 +22,8 @@ def dev_read():
     return 0
 
 
-print(f"  {'target':>7} {'prompt tok':>11} {'TTFT s':>8} {'tok/s pre':>10} {'NVMe GB':>9} {'MB/tok':>8} {'decode':>7}")
+print(f"  {'target':>7} {'prompt tok':>11} {'TTFT s':>8} {'tok/s pre':>10} {'NVMe GB':>9} {'MB/tok':>8} {'decode':>7}",
+      flush=True)
 rows = []
 for n in LENS:
     words = src * (n // len(src) + 2)
@@ -31,6 +32,7 @@ for n in LENS:
         data=json.dumps({"model": "deepseek-v4.1-flash",
                          "messages": [{"role": "user", "content": "Summarise in one sentence.\n\n" + q}],
                          "temperature": 0.6, "max_tokens": OUT, "stream": True}).encode())
+    print(f"  {n:>7}  ... requesting", flush=True)   # so a stalled arm is visible in the log
     r0 = dev_read(); t0 = time.time(); ttft = None; k = 0; st = None
     with urllib.request.urlopen(req, timeout=7200) as resp:
         for raw in resp:

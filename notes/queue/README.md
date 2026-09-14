@@ -68,3 +68,34 @@ Still not covered, and worth knowing:
 * **A job that fails the same way twice** will be re-queued twice unless the tick reads the log. That
   is a judgement the heartbeat prompt asks for; it is not enforced by the tool.
 * **Correctness.** As above: a queue enforces that work happened, not that it was right.
+
+## 2026-09-14: a job was killed by the next claim attempt, and the log could not say so
+
+`longctx-profile` vanished 10–14 minutes into a 60-minute run. Driver and child both gone, queue
+left at `state: running` with no `finished`/`rc`, **log 0 bytes**.
+
+**Cause.** The driver was launched as `tmux kill-session -t ds41q; tmux new-session -d -s ds41q
+"... qnext.py ..."` — one recycled session name. A later claim attempt ran the same line, and the
+`kill-session` killed the session that was running the job. The fingerprint is in
+`qnext-drive.log`: the `== qnext: longctx-profile ==` header is followed by `nothing runnable`,
+which is what a *second* claim prints once the first has marked the job running. qnext's own lock
+does not help — the first process was already past it and the kill came from outside.
+
+**Two fixes, both in.**
+
+1. **Launch the driver with `setsid`, not inside a named tmux session.** A driver that is not a
+   child of any session cannot be taken down by session bookkeeping:
+   ```
+   setsid env QNEXT_QUEUE=... PYTHONUNBUFFERED=1 python3 tools/qnext.py \
+       >> ~/ds41-queue/logs/qnext-drive.log 2>&1 < /dev/null &
+   ```
+2. **`PYTHONUNBUFFERED=1` on every job** (`qnext.py` now sets it in the subprocess env). The log
+   was empty because `longctx_profile.py`'s header `print()` had no `flush=True`, so a job that had
+   been running for ten minutes was **byte-for-byte indistinguishable from one that died on its
+   first instruction**. That ambiguity is what made this take a diagnosis instead of a glance.
+   `longctx_profile.py` also now prints `... requesting` before each arm, so a stalled arm is
+   visible rather than inferred.
+
+**The general rule this earns:** a long job's liveness must be readable from its log alone. If the
+only way to tell a running job from a dead one is `pgrep`, the harness is under-instrumented — and
+`pgrep` is exactly what is not available when reading the log an hour later.
