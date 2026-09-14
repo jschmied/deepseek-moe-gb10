@@ -382,3 +382,53 @@ gate"* — **independent confirmation of our cliff**, from his side and his own 
 **One behaviour change to be aware of:** `28f1f4c` widens grammar applicability — the docstring goes
 from "only when the request carries tools" to `supports_grammar` being true generally, which is what
 carries the stopped-generation repair. Tests pass; worth watching on real tool traffic.
+
+## MiaAI-Lab EXL3 on 2× Spark (2026-09-14) — the one idea worth stealing is where the bits go
+
+`MiaAI-Lab/DeepSeek-v4.1-Flash-EXL3-2x-DGX-Sparks`. ExLlamaV3 v1.4.5 + vLLM with sm_121a cubins and
+custom grouped-expert kernels, two GB10s over CX7 at tensor-parallel 2, **all experts resident, no
+streaming**. ~387 GiB on disk = 197 GiB EXL3 weights + 190 GiB Engram. Prefill **970.8 tok/s at 8k**
+(8.46 s TTFT) and **872.6 tok/s at 256k** (300 s). Decode **31.6 tok/s** solo, 42.5 aggregate at
+concurrency 2, DSpark k=3. `MAX_MODEL_LEN=600,000`, `fp8_ds_mla` KV at ~3.4 KiB/token.
+
+### 1. Bits are spent per tensor role AND per layer — we have never done the second
+
+> `EXL3 codebook mul1 (not mcg), average 2.9 bpw`, `head_bits=6, mtp_bits=4`; routed experts **K=3
+> except layers 18–22 at K=2**, shared experts K=4–5, attention K=5.
+
+Role-based allocation we already do (`DSV41_DENSE_FP4=attn,wo_a`, `DSV41_HEAD_FMT=fp8`). **Per-layer
+we have never tried.** `K=2 on layers 18–22 only` is not a rounding choice — it says somebody
+measured which layers tolerate a bit less and moved the budget.
+
+That matters because of §20: uniform CB2 costs **2.16 pp of coding top-1** and closed the
+all-resident direction. The question that measurement did *not* answer is whether the bits can be
+**moved** rather than uniformly removed. Our own `expert-frequency.md` already shows the layers are
+far from equivalent — per-layer coverage at keep 0.40 spans 73.2 % to 89.0 %, and per-layer entropy
+7.43 bits against 8.58 uniform.
+
+Now testable at no new cost: `DSV41_REF_CB` accepts a per-layer spec (`"3,18-22:2"`), so the same
+paired teacher-forced machinery that produced §16 and §20 can price any allocation. Queued as
+`cb-perlayer-sensitivity`.
+
+### 2. Their prefill number is the compute-only ceiling, and it sizes what we have left
+
+**970.8 tok/s with zero expert I/O.** Halving crudely for TP2 gives ~485 tok/s per box `[derived,
+and TP does not halve cleanly]`. Our layer-major prefill measures **224.9 tok/s** — so even after
+removing 5.56× of the expert reads we are at roughly **46 % of the no-I/O rate**, i.e. I/O still
+costs about half of prefill wall. That is the loader pipeline's remaining share, measured from the
+outside for the first time rather than derived from our own delivery bound.
+
+### 3. What they do not have
+
+**No quality comparison against the FP4 original**, at 2.9 bpw average. Nobody in this field
+publishes one; we are still the only ones with paired top-1 (CB3 −0.88 pp, CB2 −2.16 pp, McNemar and
+a temperature control). An EXL3 arm would be the interesting comparison — trellis coding at 2.9 bpw
+against a per-row codebook at 3.0 — but it needs their quantizer, and without a quality number from
+them there is nothing to compare *to* yet.
+
+### 4. Why this is not our configuration
+
+Two boxes, 197 GiB of resident weights. It is the same answer as raspy135 and 0xBakeer from a third
+direction: **fit the model, then go fast.** Ours is the one-box faithful-streaming position, and the
+honest framing stays what it was — these are different products, and their numbers are not ones we
+are losing to. What is transferable is the bit-allocation idea, which costs us one trace to test.
