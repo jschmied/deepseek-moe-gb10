@@ -126,9 +126,21 @@ GPUDirect Storage, io_uring, the CB3 arena repack, low-rank expert deltas, exper
   only option. Config: `engram_vocab_size 16,000,000`, `num_embeddings [384006168, 384016682]`,
   `n_heads 8`, `head_dim 256`, `max_ngram_size 4`, compressed vocab 99,092.
 
+## Closed 2026-09-14
+
+- **CB3 quality — settled.** Paired teacher-forced comparison against FP4 on the same 17,704
+  tokens: coding top-1 **81.55 % → 80.67 %** (McNemar 239/138, z = 5.20, p = 2e-7), general top-1
+  null. CB3's *lower* NLL is a calibration artifact — its entropy is higher, and temperature alone
+  on the FP4 arm reaches a better NLL than CB3 does. See `ds41-measured-2026-09-13.md` §16 and
+  `tools/paired_nll.py` in the fork. **State the trade when offering 3-bit: about one point of
+  coding top-1 for 211.6 GB instead of 296 GB and a 6–12× cheaper miss.** Still owed: one real
+  agent turn, not more NLL.
+
 ## Standing cautions
 
 - Published compression ratios are against FP16. V4.1 is already fp4.
+- A lower-precision arm with a *lower* NLL is almost always softening, not information. Check the
+  predictive entropy, and sweep one temperature on the baseline's own logits before believing it.
 - `notes/method.md`: name the differing cell, void conditions before the run, ranges not means,
   record what went the wrong way.
 
