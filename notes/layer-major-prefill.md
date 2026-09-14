@@ -315,3 +315,66 @@ half chunked and the decoder half once over the window tail, so the decoder laye
 to remove — the 89.3 % is all in the encoder. The decode half of the log came back empty at 16
 output tokens; the recorder's buffer is flushed on close and the job stops the server, so short
 tails can be lost. Not load-bearing here.)*
+
+---
+
+# BUILT (2026-09-14) — `DSV41_LAYER_MAJOR=1`, measured on the engine
+
+`Model.encoder_prefill_layer_major`, fork `134ce2b`. Two prompts, greedy, CB3 + dense FP4 + fp8
+head, arena 76.9 GB / 5,317 experts warm:
+
+| prompt | chunks | | prefill | NVMe | prefill expert loads | tokens identical |
+|---|---|---|---|---|---|---|
+| 5,901 | 3 | chunk-major | 29.8 s | 78.19 GB | 4,128 | — |
+| | | **layer-major** | **20.9 s** | **24.06 GB** | **1,747** | **20/20 ✓** |
+| | | | **1.42×** | **3.25×** | **2.36×** | |
+| 23,821 | 12 | chunk-major | 92.7 s | 173.18 GB | 11,327 | — |
+| | | **layer-major** | **64.0 s** | **27.45 GB** | **1,993** | **15/15 ✓** |
+| | | | **1.45×** | **6.31×** | **5.68×** | |
+
+**The oracle's central claim reproduces on the engine: the load floor is context-independent.**
+1,747 loads at 5.9k tokens, **1,993 at 23.8k** — a 4× longer prompt costs 14 % more expert loads,
+while chunk-major's grow 2.74×. Bounded by distinct `(layer, expert)` pairs, exactly as predicted.
+
+**And the part that is not a win, stated plainly: TTFT improves 1.42× / 1.45× and does not scale
+with the I/O.** That is not a disappointment, it is the delivery bound arriving on schedule — the
+oracle put current delivery at 41 % of prefill wall at both 11.3k and 27.2k, so removing nearly all
+of it caps the wall win near 1.45× while the other 59 % is compute. **The remaining prefill win is
+the loader pipeline's, not the transpose's**, and the two compose: the transpose removes the bytes,
+the pipeline hides what is left behind compute.
+
+In absolute terms, on a cold 23.8k-token turn it saves **28.7 s** and **146 GB of NVMe**.
+
+## What the implementation had to respect
+
+Both found by a failing assert or by reading the code, not by guessing:
+
+* **`Shared` is per-chunk but lives across layers.** A kv-source layer fills `ckv`/`ik`/`ratio` and
+  the layers above reuse it — layers 21–23 reuse layer 20's top-k, 24–39 search inside its candidate
+  pool. Chunk-major gets this free by threading one `Shared` down a chunk's whole layer stack. A
+  fresh one per (layer, chunk) trips `_compressed`'s own `sh.ratio == r` assert at **layer 3**. The
+  transpose holds one per chunk for the entire pass, which costs the candidate masks staying alive:
+  ~33 MB per 2,048-token chunk, so ~400 MB at 24k.
+* **`c.len` is written once, at the end.** Verified rather than assumed: nothing on the encoder path
+  reads it, `_compressed` derives its indices from `S`, `T` and `pending[L]` alone, and `pending` is
+  per-layer — so walking chunks inside a layer advances exactly the state that layer owns.
+
+## What was deliberately left alone
+
+* **Attention stays chunked at `MAX_CHUNK`, chunks still in order** — chunk *k* reads the KV chunks
+  *< k* wrote. Enlarging the chunk is the other, measured-worse lever (8192 reads 58 % less and is
+  16 % slower).
+* **The MoE kernel still runs per chunk.** Only the route and the resolve are hoisted, so the
+  transient ring holds a layer's expert set once instead of refilling per chunk, and the activation
+  working set stays at one chunk rather than the whole prompt. This is also what keeps the 32-expert
+  unpack batching intact, which the reuse probe showed is load-bearing (unpack-once was 33 % slower).
+* **The prompt cache's resume path still takes the chunk-major loop.** The layer-major pass has no
+  moment at which the cache is valid up to chunk *k* and no further — layer L's compressor runs ahead
+  of layer L+1 for most of the pass — so a mid-prompt resume has nothing coherent to resume from.
+  The two features are complementary rather than composable as written: the cache serves turns 2..n,
+  the transpose serves the cold turn.
+
+## Still to do before it is the default
+
+Three separate processes per arm for the timing numbers (these are one start each); the free-generation
+and token-integrity gates; and a long-context arm at 27k where `sh.candidates` holds ~470 MB.
