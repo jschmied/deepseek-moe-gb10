@@ -78,6 +78,7 @@ and continues).
 | prompt tokens | TTFT | ms per prompt token | prefill rate | NVMe | MB per prompt token |
 |---|---|---|---|---|---|
 | 2,922 | 44.1 s | 15.1 | 66.3 tok/s | 113.6 GB | 38.9 |
+| 5,892 | 56.5 s | 10.4 | 104.3 | 166.5 | 28.3 |
 | 11,344 | 119.2 s | 10.5 | 95.2 | 345.9 | 30.5 |
 | 22,210 | **213.9 s** | 9.6 | 103.8 | **598.8 GB** | 27.0 |
 
@@ -105,3 +106,24 @@ the single 11k point it rested on before.
 **One caveat on the decode column** (1.43 / 1.97 / 2.11 tok/s): those generations were 64 tokens, so
 prefill misses amortise over almost nothing — the same trap as §10. They are not comparable to the
 6.24 reference and should not be read as a context-length decode curve.
+
+
+## The 5,892-token point, and why the 28k arm is still missing (2026-09-14)
+
+`longctx-profile` re-run added the row above. Prefill rate over the four points: **66.3, 104.3,
+95.2, 103.8 tok/s** at 2.9k / 5.9k / 11.3k / 22.2k tokens — flat from ~6k on, so prefill throughput
+saturates near **100 tok/s** and TTFT is essentially linear in prompt length past that. The 2.9k
+point being slower is the fixed per-request cost showing through on a short prompt, not a trend.
+
+MB per prompt token falls monotonically — 38.9, 28.3, 30.5, 27.0 — which is the expert LRU warming
+across the prompt, not an economy of scale in the reads.
+
+**The 28k arm returned NO OUTPUT, and the cause is the harness, not the engine.** `longctx_profile.py`
+takes a *word* target and emits `0.75 x target` words; the measured word→token ratio on this corpus
+is **1.39–1.47**, so `--target 28000` asks for roughly **41,000 tokens** against a 32,768 context. The
+tool's guard caught it and carried on instead of crashing the sweep, which is the behaviour added
+after the first run's `ttft=None` crash. To land near 28k tokens the target is **~19,500**; requeued
+that way.
+
+Stated because it is the number the prompt cache is measured against: at 22,210 tokens this engine
+spends **213.9 s before the first generated token**, every turn.
