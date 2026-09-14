@@ -352,3 +352,60 @@ Measured support for the middle row: within a layer, ordering the **misses** by 
 **28.5 %** of the layer's blocked token-expert pairs in the first 32 reads, against **12.9 %** for the
 arbitrary expert-id order `np.unique` currently produces (51.1 % vs 26 % at 64). Notable because the
 misses *are* the cold tail — the hot experts are resident — so skew was not guaranteed to survive there.
+
+## The `wait_stream` hypothesis is REFUTED — and it reinstates the contention verdict
+
+`waitstream-diag`, `EARLY_SUBMIT=all`, three separate processes per arm, medians of starts 2–3.
+Both arms **PASS token equality** (21/21 identical), so the unsafe arm is a result, not corruption.
+
+| | TTFT | encoder | attn+route | resolve | **FFN** |
+|---|---|---|---|---|---|
+| `wait_stream(compute)` **present** | 54.4 s | **49.7 s** | 24.8 s | 6.9 s | **17.9 s** |
+| `wait_stream(compute)` **removed** | 61.5 s | **56.9 s** | 25.7 s | 7.5 s | **23.7 s** |
+| | | **+14.5 %** | +3.8 % | +8.0 % | **+32.0 %** |
+
+**Removing the barrier makes it worse, and the cost lands in the FFN**, not in `attn+route` where my
+hypothesis put it. That is not a shape the "the barrier gates our overlap" story predicts at all.
+
+### What it actually shows
+
+With the barrier, an expert's H2D is serialised *after* whatever compute was queued, so the copy and
+the kernels each get the memory system to themselves. Remove it and the copies genuinely overlap the
+MoE kernels — **and the MoE kernels slow by 32 %.** The overlap is real; it is simply not free,
+because on this part the CPU and GPU share one memory system and an 13.77 MB H2D per expert is
+memory traffic that the kernels also need.
+
+**So "GPU 31–33 % busy" and "NVMe at 2.3–3.0 of 5.0–6.8 GB/s" do not mean there is headroom to
+overlap into.** SM occupancy is not memory-system occupancy. A kernel can sit at a third of the SMs
+and still be taking most of the bandwidth, and this is the first direct evidence of it on GB10:
+the same kernels, the same data, 32 % slower purely from copies running alongside.
+
+### The correction I owe
+
+After the `io_threads` result I wrote that the 1.03 × verdict should be softened — that *"the premise
+is untested, because the implementation gated its own overlap behind an inherited barrier"*. That was
+wrong. The barrier is **load-bearing**: it is worth more than the overlap it prevents, by 7.2 s of
+49.7. The original reading of the A/B/C/D run — that hiding an SSD read under compute costs about as
+much as it saves — stands, and now has a direct measurement behind it rather than a subtraction.
+
+Two lessons, both about me rather than the engine:
+
+* I found a plausible mechanism in the code and promoted it to an explanation before testing it. The
+  code evidence was real (the barrier *is* a per-slot dependency implemented globally); the inference
+  from it was not.
+* The flat `io_threads` curve is equally consistent with "workers parked behind a barrier" and
+  "memory system saturated". I read it as the first because I had just found the barrier.
+
+### What this costs the plan
+
+The loader-pipeline family is **capped by memory bandwidth, not by scheduling**. Stage C (FFN
+executing as expert batches land) overlaps *more* copies with *more* kernels, so it inherits this
+penalty rather than escaping it — on this evidence it could be net negative.
+
+Still standing, because neither overlaps a copy with a kernel:
+
+* **shared-expert overlap** — compute against compute;
+* **traffic-ordered submission** — only useful with partial MoE, which is now doubtful;
+* **layer-major itself**, which *removes* 5.4× of the copies rather than rescheduling them. That is
+  the lever that worked, and the reason is now clear: on a shared memory system the only reliable win
+  is moving fewer bytes.
