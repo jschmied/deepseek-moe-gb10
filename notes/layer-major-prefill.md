@@ -423,3 +423,20 @@ this configuration is clean, and the transpose does not touch it.
 Worth keeping as a method note: the gate produced a believable 71 % score that would have read as a
 real quality finding. What exposed it was the A/B — *the same four* failing on both sides of a change
 that should have moved them if they were real.
+
+## DEFAULT ON (2026-09-14) — re-validated with checkpoint assembly in the loop
+
+| | TTFT | prefill | NVMe |
+|---|---|---|---|
+| chunk-major | 176.9 / 156.3 / **152.4** s | 94.8 / 107.4 / **110.1** | 512.2 / 432.6 / **438.5** GB |
+| **layer-major** | 83.2 / 72.7 / **72.1** s | 201.6 / 230.8 / **232.6** | 93.8 / 80.8 / **80.6** GB |
+| median ratio | **2.15×** | **2.15×** | **5.43×** |
+
+Against the pre-`dc74db5` run's 2.06× / 5.56×, so the per-boundary `pending` clones the prompt-cache
+composition added are **inside run-to-run variation** — the thing this re-run existed to check.
+
+**Both quality gates neutral on both arms**: 5/5 degeneration at 2000 tokens, **14/14** rare
+identifiers byte-exact. (The earlier 10/14 was the gate, not the model — fixed to accept a dotted
+path as an import plus a bare tail, and it now reads 14/14 on the *baseline* too.)
+
+Shipped as the default alongside the prompt cache. `DSV41_LAYER_MAJOR=0` disables it.
