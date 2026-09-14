@@ -151,3 +151,24 @@ measured chunk-major. So the two compose as intended —
 The cached column is unchanged from the cache's own measurement (22.0 / 20.3 / 22.3 s), which is the
 right outcome: the cache resumes past the prefill either way, so layer-major cannot help a turn that
 barely prefills — and, now, cannot hurt it either.
+
+## Token equality with both features on (2026-09-14)
+
+The half of `layer-major-cache-ab` that VOIDed on runner ordering, re-run: 12,621-token prompt,
+`DSV41_PROMPT_CACHE=1` and `DSV41_LAYER_MAJOR=1` both live.
+
+```
+chunk-major: prefill 30.209s, nvme 77.92 GB, prefill misses 4116
+layer-major: prefill 10.387s, nvme 18.36 GB, prefill misses 1333
+PASS: 20 tokens identical chunk-major and layer-major
+prefill expert loads 4116 -> 1333 = 3.09x fewer; NVMe 77.92 -> 18.36 GB
+```
+
+So the transpose still emits the same tokens with the cache's checkpoint assembly running inside its
+hot loop. Both halves of the composition question are now green: the cache resumes under
+layer-major, and layer-major is token-identical under the cache.
+
+*(The runner's earlier VOID was ordering: it built a second engine while the server still held
+83 GB, and the upstream pre-flight check refused it at MemAvailable 3.6 GB. The fix is to stop the
+server and wait on MemAvailable first — and the check refusing rather than loading for three minutes
+and dying is exactly why it was worth cherry-picking.)*
