@@ -131,6 +131,29 @@ A decode step is 6 positions × 6 experts at an ~89 % hit rate — a handful of 
 Splitting a tiny MoE into extra launches could cost more than it hides. Build all of this in
 `encoder_prefill_layer_major` only, and leave `moe()` alone until a measurement says otherwise.
 
+## The per-layer split, measured (2026-09-14)
+
+`DSV41_LM_PHASES=1`, 12,621-token prompt, 7 chunks, layer-major:
+
+```
+[layer-major phases] 21 encoder layers, 34.0s:
+    attn+route 18.1s (53%)    resolve 6.3s (19%)    ffn 9.6s (28%)
+```
+
+Per layer: **attn+route 0.86 s, resolve 0.30 s, FFN 0.46 s.** My pre-measurement estimates had
+delivery at ~312 ms/layer (right) and attention at ~1.2 s/layer (high — it is 0.86).
+
+**This resizes P0.** After chunk 0 routes — about 123 ms into the layer — there are ~0.74 s of
+remaining attention to hide 0.30 s of resolve under: **2.4× more lead time than the delivery needs**.
+So P0 can plausibly hide *all* of resolve, and resolve is **19 %** of layer-major prefill. That is
+34.0 s → ~27.7 s, about **1.23×** — the honest ceiling, and smaller than the oracle framing implied
+because layer-major already took the large cut. The three stages together are worth roughly a
+quarter of prefill, not a multiple of it.
+
+One thing visible per layer and worth keeping: **L2 spends 1.36 s in attn+route against ~0.80 for
+its neighbours.** Layer 2 is a `kv_source` layer, so that is the compressor. If attention ever
+becomes the target, the four source layers are where it lives.
+
 ## Built so far: the instrumentation, and only that
 
 `DSV41_LM_PHASES=1` reports per encoder layer the split between attention+route, resolve, and FFN.
