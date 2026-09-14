@@ -60,12 +60,17 @@ for n in LENS:
         rows.append({"target": n, "arm": arm, "turn1": s1, "turn2": s2})
 json.dump(rows, open(os.path.expanduser("~/ds41-queue/logs/promptcache.json"), "w"), indent=1)
 
-print("\n  speedup on turn 2, warm against cold:", flush=True)
+# The right baseline for "turn 2 with the cache" is a FULL prefill of a prompt that length --
+# which is turn 1 of the cache-busted arm, within ~1 % of turn 2's length. Comparing turn 2 warm
+# against turn 2 "cold" is vacuous: turn 1 repopulates the cache, so both arms resume. The first
+# version of this script printed exactly that vacuous 1.04-1.07x.
+print("\n  turn 2 with the cache, against a full prefill of the same length:", flush=True)
 for n in LENS:
-    w = next(r for r in rows if r["target"] == n and r["arm"] == "warm")["turn2"]
-    c = next(r for r in rows if r["target"] == n and r["arm"] == "cold")["turn2"]
-    if w.get("prefill_s") and c.get("prefill_s"):
-        print(f"    {n:>7}: {c['prefill_s']:.1f}s -> {w['prefill_s']:.1f}s  "
-              f"({c['prefill_s']/max(w['prefill_s'],1e-9):.2f}x), reused "
-              f"{w.get('prompt_cache_reused',0)} of {w.get('prompt_tokens')}", flush=True)
+    base = next(r for r in rows if r["target"] == n and r["arm"] == "cold")["turn1"]   # reused 0
+    got = next(r for r in rows if r["target"] == n and r["arm"] == "cold")["turn2"]
+    if base.get("prefill_s") and got.get("prefill_s"):
+        print(f"    {got.get('prompt_tokens')} tok: {base['prefill_s']:.1f}s -> "
+              f"{got['prefill_s']:.1f}s ({base['prefill_s']/max(got['prefill_s'],1e-9):.2f}x), "
+              f"NVMe {base.get('nvme_gb')} -> {got.get('nvme_gb')} GB, reused "
+              f"{got.get('prompt_cache_reused',0)} of {got.get('prompt_tokens')}", flush=True)
 print("== ALL DONE ==", flush=True)

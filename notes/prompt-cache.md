@@ -87,3 +87,34 @@ within 2176 tokens of the end instead of re-prefilling 22k.
 NVMe barely moves (28.8 vs 27.7 GB) because the expert LRU is shared between the two arms; the warm
 arm reads *more* per prefilled token, not less. So this is a compute win at the arena coverage we
 run, not an I/O win. The I/O half is the layer-major transpose's job, and the two compose.
+
+## At real context: **TTFT stops being linear in the prompt** (2026-09-14)
+
+`promptcache-longctx`, three conversation lengths, greedy. The right baseline for "turn 2 with the
+cache" is a full prefill of a prompt that length — turn 1 of the cache-busted arm, within 1 % of
+turn 2's length:
+
+| turn-2 tokens | prefill, no cache | prefill, cached | | NVMe, no cache | cached | |
+|---|---|---|---|---|---|---|
+| 5,955 | 62.9 s | 22.0 s | **2.85×** | 202.3 GB | 79.8 GB | 2.54× |
+| 11,383 | 118.6 s | 20.3 s | **5.83×** | 360.6 GB | 66.0 GB | 5.46× |
+| 22,249 | 203.6 s | 22.3 s | **9.12×** | 578.1 GB | 70.8 GB | 8.17× |
+
+**The ratio is not the result — the constant is.** Turn 2 costs **20.3–22.3 s at every length**,
+because the resumed suffix is always the reply plus the follow-up plus chunk-boundary rounding:
+1,859 / 1,143 / 1,769 tokens. So the cache converts TTFT from *linear in context* to *constant in
+the increment*, and the speedup only looks bigger at long context because the thing it replaces
+grows. Extrapolated to the 27,200-token point of the long-context curve, turn 2 would be ~22 s
+against 261.3 s — **~12×** — and still ~22 s at any context the engine can hold.
+
+Reused is always a multiple of 2,048 (4,096 / 10,240 / 20,480), which is the chunk-boundary rounding
+working as designed. The residual 21 s is ~1,800 tokens at 86 tok/s, consistent with the measured
+prefill rate; its ~40 MB per prefilled token against the steady-state 27 is the suffix's experts
+not being warm.
+
+**A flaw in the first version of this measurement, recorded because the number it printed looked
+plausible.** The script's "cold" arm busts the cache with a short unrelated prompt and then runs
+turn 1 — which repopulates it, so turn 2 of the "cold" arm resumes too. Comparing warm turn 2
+against "cold" turn 2 therefore compared two cached turns and printed **1.04–1.07×**: a believable
+small number that would have read as "the cache barely helps at long context" and buried the result.
+The genuinely cold rows (`reused 0`) were in the same table. Fixed in the tool.
