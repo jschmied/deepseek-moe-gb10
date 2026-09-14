@@ -475,3 +475,16 @@ truncated router was.
 
 It is a structural gate, not a quality benchmark — it says the model is not degenerating, not that
 3-bit costs nothing. NLL against FP4 and a real agent turn are still owed.
+
+## The NLL half of that debt, paid (2026-09-14)
+
+Measured: `ds41-measured-2026-09-13.md` §16. Paired teacher-forced comparison against the FP4 arm on
+the same 17,704 tokens — **coding top-1 81.55 % → 80.67 %** (McNemar 239/138, z = 5.20, p = 2e-7);
+general top-1 unchanged (46.88 → 46.82, z = 0.18). CB3's *lower* NLL is not a win: its predictive
+entropy is higher in both categories, and temperature alone on the FP4 arm's own logits reaches
+pooled NLL 1.656 at T = 1.40 versus CB3's 1.759 at T = 1. The requantization noise softens the
+distribution, and NLL rewards that.
+
+So the honest pitch for this cache is capacity and I/O, not free quality: 211.6 GB instead of
+296 GB on disk and a 6–12× cheaper miss, for about **one point of coding top-1**. A real agent turn
+is still owed; NLL is closed.
