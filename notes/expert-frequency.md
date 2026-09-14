@@ -100,3 +100,60 @@ trace_stats"*. `.env` pointed at `trace-full-20260910`, whose `trace/` the strea
 deletes layer by layer as it runs. Stats regenerated for `trace-unmasked-20260913`, which still has
 all 40. **The keep set therefore comes from a different trace than the stored failure used**, which
 is a second live hypothesis for the disagreement and should be stated whenever this result is quoted.
+
+## 0xBakeer v0.5.0 (2026-09-14): frequency ranking is the wrong axis, and our gate cannot see the failure
+
+He moved from `8b68fdd` to `45a0caf` "Release 0.5.0" in a day, and the shape of the change matters
+more to us than the numbers. The recipe:
+
+```
+DSV41_PRUNE_SOURCE=saliency    # rank by contribution, not frequency
+DSV41_PRUNE_RANK=maxmin        # give slots to the worst-served topic
+PRUNE_KEEP=0.40 / 0.36         # 154 or 139 experts a layer
+```
+
+**1. Contribution ranking beats frequency ranking, and the failure mode is one our gate scores as a
+pass.** Frequency-ranked keep-0.40 *"corrupts rare tokens at subword boundaries —* `clearTimeout`
+*written* `cleartimeout`*,* `OSError` *as* `oenerror`*"*. Contribution ranking —
+`gate_weight(t,e) · ‖expert_e(x_t)‖₂` summed over the tokens routed to the expert — removes it:
+*"Not one rare token corrupts under contribution ranking, where frequency wrote* `ttimerid` *and*
+`color-s-s-mode`*"*.
+
+**Everything we rank is frequency-ranked**, including `coverage.json`'s `counts` and therefore every
+keep-set in `prune-keep-cliff`. And — this is the part that invalidates the reading, not just the
+ranking — **`gen_gate.py` cannot detect this failure at all.** A corrupted identifier is still a
+distinct token, still repeats no line, still lets the model finish. Distinct-token ratio and line
+repeats are blind to it by construction. That is why our keep-0.40 arm "passed 5/5" while his
+frequency-ranked keep-0.40 was corrupting identifiers. **The two results do not contradict; ours was
+measured with an instrument that cannot see his failure.**
+
+`tools/token_integrity.py` is the missing instrument: ask for specific rare identifiers
+(`clearTimeout`, `XMLHttpRequest`, `itertools.groupby`, `pthread_mutex_trylock`,
+`__builtin_expect`, `os.posix_fadvise`) at temperature 0 and check they come back byte-exact, with a
+separate "mangled" class for an identifier that is present but case- or separator-corrupted.
+
+**2. Substitution beats dropping — measured, and it corrects me.** Earlier today I wrote that
+substituting a wrong expert is *"arguably the more violent of the two"* compared with dropping.
+Measured the other way: drop mode scores **0 of 6** on Frontend at keep 0.36 with thinking on,
+against substitution's 7 of 10. Dropping zeros the non-resident experts and `norm_topk_prob`
+renormalises over roughly four survivors of six, with a shared-expert-only fallthrough on about one
+token in twenty. Substitution won decisively.
+
+**3. One keep-set for everything does not work, which is our Jaccard result from the other side.**
+*"Everything"* (37 topics) scores **4 of 39**; *"Programming, broadly"* (15 topics) **4 of 16**. Seven
+narrow profiles score **39 of 61** on contribution ranking against 34 of 61 on frequency. Our
+own measurement said the same thing structurally: per-layer top-25 % sets have Jaccard **0.067–0.185**
+across categories, so a merged keep-set is worst exactly where the budget is tightest.
+
+**4. Even at its best this is 39 of 61 — 64 %.** It is a real quality cost, not a free lunch, and it
+is scored on his own gates rather than a public benchmark.
+
+**5. The limitation that matters most for us: the 0.40 all-resident configuration cannot hold a
+filled context.** *"No request in any of these gates prefilled anything like 262,144 tokens; the
+longest prompt in the whole suite is 58 words."* And a 195k-token prefill *"took MemAvailable to
+0.8 GB and the watchdog killed the engine after 582 s"*.
+
+So his configuration and ours are **not competitors for the same job**. His is short prompts, fast
+decode, one narrow task at a time. Ours is the faithful full router at long context — where we
+measured 27,200 tokens at 261.3 s cold and **~22 s cached**, and where his config dies. That is the
+honest framing for both, and it means the 36.6 tok/s is not a number we are losing to.
