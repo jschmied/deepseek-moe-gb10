@@ -173,3 +173,46 @@ first.
 
 *(The decode column, 1.43–1.53 tok/s, is 64-token generations again — not comparable to the 6.24
 reference, same caveat as §14 of the serving profile.)*
+
+---
+
+## The oracle, before the rewrite (2026-09-14)
+
+Third-party suggestion, and it is the right order of work: measure the ceiling from real routes
+before writing the transpose. Expert identity is `(layer, expert)` and there is no useful
+cross-layer reuse, so *"hold this layer's experts until every chunk has consumed them"* is very
+nearly the **exact** upper bound for layer-major — not a loose global Belady bound. That is what
+makes this oracle worth trusting.
+
+**Recording.** `engine/experts.py` now writes one JSON line per `resolve()` call under
+`DSV41_ROUTE_LOG=<path>` (off by default, a few hundred short lines for a whole prompt):
+`{"i", "L", "pf", "uniq", "miss"}` — what this (layer, chunk) wanted, and which of those were not
+resident. Everything the oracles need is in that.
+
+**Replaying.** `tools/prefill_io_oracle.py` produces, from one log:
+
+| | what it is |
+|---|---|
+| current | Σ over calls of \|miss\| — what the engine reads today |
+| layer-union | Σ over **layers** of \|∪ miss\| — each missing expert read once per layer |
+| layer-union, cold arena | Σ over **layers** of \|∪ uniq\| — ignores LRU warmth, so it does not move between runs (and sits *above* the residency-aware number) |
+
+plus a delivery-time bound at the **measured** CB3 cache latencies (4.14 / 2.23 / 2.04 ms per load
+at queue depth 1 / 2 / 4), which separates *the gain from not re-reading* (the bytes column) from
+*the gain from queue depth* (QD1 → QD4 on the same bytes). With `--compute-s` it also prints
+`max(compute, delivery)` per layer — flagged in the output as an assumption, because the engine does
+not time layers separately and the compute is spread evenly.
+
+**One thing the oracle makes clear that the byte count alone does not.** The layer-union figure is
+reached by *reordering*, not by residency: each expert batch is read once, used by every chunk, then
+discarded. So layer-major does **not** require holding a layer's 384 experts (5.55 GB of CB3) at
+once — it needs the existing 32-expert working set (0.46 GB CB3 + 0.60 GB unpacked FP4). That is
+also what keeps the 32-expert unpack batching intact, which the reuse probe showed is load-bearing.
+
+**And the state it does have to hold is not a constraint.** `dim = 5120`, `hc_mult = 4`, so a
+layer's token state is `[T, 4, 5120]` bf16: 0.46 GB at 11.3k tokens, 0.91 GB at 22k, **1.34 GB at the
+full 32k**, plus a megabyte of `pre_mix`. Against ~20 GB free. The design question is the routing
+and gather bookkeeping, not memory.
+
+Status: tool written and its arithmetic checked on a synthetic log; the real recording waits for the
+GPU (`longctx-profile` is running). Numbers to follow.
