@@ -81,6 +81,7 @@ and continues).
 | 5,892 | 56.5 s | 10.4 | 104.3 | 166.5 | 28.3 |
 | 11,344 | 119.2 s | 10.5 | 95.2 | 345.9 | 30.5 |
 | 22,210 | **213.9 s** | 9.6 | 103.8 | **598.8 GB** | 27.0 |
+| 27,200 | **261.3 s** | 9.5 | 104.1 | **730.2 GB** | 26.8 |
 
 **Prefill gets more efficient with length** — 66 → 104 tok/s, 38.9 → 27.0 MB per prompt token — which
 is the chunking and the expert working set amortising. But the absolute cost does not care: a
@@ -118,7 +119,13 @@ point being slower is the fixed per-request cost showing through on a short prom
 MB per prompt token falls monotonically — 38.9, 28.3, 30.5, 27.0 — which is the expert LRU warming
 across the prompt, not an economy of scale in the reads.
 
-**The 28k arm returned NO OUTPUT, and the cause is the harness, not the engine.** `longctx_profile.py`
+**The 27,200-token point landed on the re-run**: 261.3 s TTFT, 104.1 tok/s, **730.2 GB of NVMe for
+one prompt**. Prefill rate across all five points is 66.3 / 104.3 / 95.2 / 103.8 / **104.1** tok/s —
+dead flat from ~6k on, so the curve is a straight line and TTFT can be read off as
+`prompt_tokens / 104` seconds plus a fixed ~15 s. MB per prompt token settles at **26.8–27.0** once
+the LRU is warm.
+
+**The first attempt's 28k arm returned NO OUTPUT, and the cause was the harness, not the engine.** `longctx_profile.py`
 takes a *word* target and emits `0.75 x target` words; the measured word→token ratio on this corpus
 is **1.39–1.47**, so `--target 28000` asks for roughly **41,000 tokens** against a 32,768 context. The
 tool's guard caught it and carried on instead of crashing the sweep, which is the behaviour added
