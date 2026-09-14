@@ -51,14 +51,21 @@ def run(prompt, n):
 
 
 WALL = {"route_s", "load_s", "resolve_s", "moe_s", "attn_s", "engram_s"}
-PROMPT = "Write a Python LRU cache with get and put in O(1), with docstrings and three unit tests."
-st, k = run(PROMPT, 512)
+# A task the model does not finish in 130 tokens. Generation length is content-limited, not
+# max_tokens-limited, and a short generation right after a restart misses ~3x more per step than
+# the steady state -- which makes its SHARES fine and its LEVELS unrepresentative.
+PROMPT = ("Write a complete Python module implementing a B-tree with insert, delete, search and "
+          "range scan, with full docstrings, type hints, and a test suite covering at least eight "
+          "cases. Output only code.")
+import sys
+st, k = run(PROMPT, int(sys.argv[1]) if len(sys.argv) > 1 else 512)
 d = (st or {}).get("decode_only")
 if not d:
     print("  no decode_only in x_engine_stats -- the engine predates the prefill snapshot"); raise SystemExit(1)
 acc = st.get("accept_len_mean") or 1.0
 steps = max(k / acc, 1)
-print(f"\n  {k} tokens, accept {acc}, ~{steps:.0f} decode steps, hit {st.get('expert_hit_rate')}")
+print(f"\n  {k} tokens, accept {acc}, ~{steps:.0f} decode steps, hit {st.get('expert_hit_rate')}, "
+      f"decode {st.get('decode_tok_s')} tok/s over {st.get('decode_s')} s")
 print(f"  counters below are DECODE ONLY, from the engine's prefill snapshot.\n")
 print(f"  {'counter':<16} {'total s':>9} {'ms/step':>9}  kind")
 for key in KEYS:
@@ -68,5 +75,19 @@ for key in KEYS:
 if "bytes_read" in d:
     print(f"\n  decode NVMe {d['bytes_read']/1e9:.1f} GB over {k} tokens "
           f"= {d['bytes_read']/1e6/k:.0f} MB/token")
-print(f"  misses {d.get('misses')}, prefill_misses {d.get('prefill_misses')} (should be ~0 in decode)")
+mps = d.get("misses", 0) / steps
+print(f"  misses {d.get('misses')} = {mps:.0f}/step, prefill_misses {d.get('prefill_misses')} "
+      f"(must be 0 -- if not, the server is running pre-605f09d code)")
+# The benchmark's steady state is ~133 misses/step. Well above that means the arena has not caught
+# up with THIS request's experts, so the shares below are usable and the levels are not.
+if mps > 200:
+    print(f"  WARNING: {mps:.0f} misses/step against the benchmark's ~133. Levels are not the "
+          f"serving levels; read the shares only.")
+dw = st.get("decode_s") or 0
+if dw:
+    print(f"\n  share of decode wall ({dw:.1f} s): resolve {100*d.get('resolve_s',0)/dw:.0f} %, "
+          f"of which load-wait {100*d.get('load_s',0)/max(d.get('resolve_s',1e-9),1e-9):.0f} % "
+          f"and route bookkeeping {100*d.get('route_s',0)/max(d.get('resolve_s',1e-9),1e-9):.0f} %")
+    print(f"  attn_s/moe_s read 0 on the fast path: the CUDA-graph decode never updates m.stats, "
+          f"so this is NOT evidence that compute is free.")
 print("== ALL DONE ==")
