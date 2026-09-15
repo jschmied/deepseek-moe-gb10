@@ -79,6 +79,43 @@ Sequence:
 2. Swap in v1's real logic block by block behind the same `ExpertStore` interface.
 3. v1 stays the default. Every arm is an A/B on the box, warm reps only, engine counters only.
 
+## MEASURED 2026-09-15, same evening: two of the three open questions are answered, and they
+## narrow the design sharply
+
+**f = 0.0105** (job 175, decode trace, attribution by kernel identity). The shared expert is
+**1.0 %** of decode GPU time; routed MoE is 18.5 %, attention+HC 2.0 %. So the expert-independent
+overlap window is 0.032 s of a 104 s span -- **0.03 %**. Overlap-with-compute is worth essentially
+nothing at decode, and the design note's own caveat applies: the value of the restructuring rests on
+the other three dependencies, not on overlap.
+
+**The box agrees, to within noise** (job 170, decode, 384-token generations, token-counted):
+
+| arm | decode tok/s |
+| --- | --- |
+| no early submit, barrier on | 3.99 / 4.03 |
+| EARLY_SUBMIT=all, barrier on | 4.09 / 4.04 |
+| EARLY_SUBMIT=all, barrier OFF (unsafe) | 4.11 / 4.08 |
+
+About **+1 %** for async issue, and another ~+0.5 % for removing the barrier entirely. **The
+wait_stream hypothesis is refuted at decode**: the barrier is not swallowing a large overlap,
+because there is no overlap to swallow. The corrected ceiling predicted +1.4-3.5 % for the loader at
+low f and the box measured +1 % -- the model is calibrated, which also raises confidence in its
++81-84 % figure for prediction.
+
+**So the v2 case changes shape.** "Fork-join prevents overlapping compute" is true and worth ~1 %.
+The real targets, in the order the profile ranks them, are:
+
+1. **26.2 s of the 78.1 s block has NO tracked device work at all.** Unexplained, and now the
+   largest single item at decode. CPU work is invisible to the syscall tables, so a queue-based
+   loader could inherit it rather than remove it. THIS is the thing to chase next.
+2. **47.4 s waiting on reads that are already in flight** -- a bandwidth/concurrency problem, not an
+   ordering one. 2.78 of 6.82 GB/s.
+3. **cudaMemcpyAsync 19.90 s over 21,132 calls at 942 us.** Still unexplained; not the barrier, per
+   job 170.
+
+Issuing reads *earlier than the router allows* is the only structural source of lookahead left, and
+that requires prediction -- which is why the corrected ceiling and this profile point the same way.
+
 ## Open questions this design must NOT assume away
 
 * **f**, the expert-independent fraction of per-layer compute (job 175). The shared expert is 1 of
