@@ -151,6 +151,10 @@ GPUDirect Storage, io_uring, the CB3 arena repack, low-rank expert deltas, exper
   predictive entropy, and sweep one temperature on the baseline's own logits before believing it.
 - `notes/method.md`: name the differing cell, void conditions before the run, ranges not means,
   record what went the wrong way.
+- **The NVMe column of `tools/longctx_profile.py` is a `/proc/diskstats` delta for nvme0n1, not the
+  store's own `stats["bytes_read"]`.** It charges the arm with every other read on the device during
+  the window, and the window is the TTFT itself, so a slow repetition collects more foreign traffic
+  and inflates twice over. Log `bytes_read` per rep before attributing a byte anomaly to a policy.
 
 ## Residency simulations — done 2026-09-13 (see notes/expert-residency-simulations.md)
 
