@@ -1,0 +1,120 @@
+
+  /home/jschmied/ds41-queue/logs/route-decode.jsonl
+  21,956 decode resolve calls (0 out-of-cycle), 481,727 activations, 37,601 misses, 548.9 decode steps
+  21.94 active experts per call, 1.71 misses per call, miss rate 7.81 %
+  misses per call: 23.0 % are 0, 29.6 % are exactly 1, 47.4 % are >= 2 (only those can be coalesced at all)
+  one miss = 13.14 MiB of NVMe
+
+====================================================================================================
+  Q1  CO-ACTIVATION AND MISS CLUSTERING
+====================================================================================================
+  ACTIVE sets, per layer, over decode steps
+  pairs that co-occur, observed / independence-expected :  0.985  (5,275,721 vs 5,353,673)
+    ^ this ratio is NOT evidence: sum of co-occurring pairs is fixed by the per-token
+      set sizes, so it only reports how far set-size variance pushes it off 1.000.
+  dispersion  sum C_ef^2   real    232,098,481   curveball null    219,913,120 +- 422,468   excess  +5.54 %  z +28.8
+  distinct pairs ever seen  real        673,318   curveball null        711,154                             -5.32 %
+  pairs at analytic z>=3    real  1.890 %  curveball null  0.716 %   (the null's own false-positive rate at the same threshold)
+
+  MISSED sets, per layer, over decode steps
+  the one that matters: a recurring small group of co-missing experts is coalescable.
+  pairs that co-occur, observed / independence-expected :  1.219  (40,106 vs 32,902)
+    ^ this ratio is NOT evidence: sum of co-occurring pairs is fixed by the per-token
+      set sizes, so it only reports how far set-size variance pushes it off 1.000.
+  dispersion  sum C_ef^2   real         43,850   curveball null         41,389 +- 298   excess  +5.95 %  z +8.3
+  distinct pairs ever seen  real         38,529   curveball null         39,471                             -2.39 %
+  pairs at analytic z>=3    real  1.271 %  curveball null  1.301 %   (the null's own false-positive rate at the same threshold)
+
+  miss concentration per layer (could a few experts BE the miss set?)
+    distinct experts ever missed per layer: 263 of 384
+    share of a layer's misses from its top 16 / 32 / 64 most-missed experts: 13.3 % / 24.6 % / 44.0 %
+    uniform-over-the-263-touched null would give 6.1 % / 12.2 % / 24.3 %
+    multi-miss calls whose WHOLE miss set is inside the layer's top-32:  3.32 % real vs  3.11 % curveball (same miss rates, no grouping) -> x1.06
+    multi-miss calls whose WHOLE miss set is inside the layer's top-64: 12.37 % real vs 12.10 % curveball (same miss rates, no grouping) -> x1.02
+
+====================================================================================================
+  Q2  CONTIGUITY OF MISSES IN SLOT ORDER
+====================================================================================================
+  gaps between consecutive sorted missed ids within one call (20,690 gaps)
+                       real   uniform null
+    p10                11.0           11.0
+    p25                29.0           29.0
+    p50                68.0           68.0
+    p75               130.0          130.0
+    p90               200.1          200.0
+    mean               88.9           88.9
+    gap <= 1           0.91 %          1.03 %
+    gap <= 2           1.89 %          2.03 %
+    gap <= 4           3.83 %          3.98 %
+    gap <= 8           7.69 %          7.79 %
+
+  coalescing runs at gap tolerance t (t = unwanted slots tolerated between two wanted).
+    t     reads  reads/call   vs t=0     slots  overfetch  MiB/step  |  null reads  null over
+    0    37,413       1.704     0.0 %    37,601       0.0 %     899.9  |      37,392       0.0 %
+    1    37,210       1.695    -0.5 %    37,804       0.5 %     904.8  |      37,186       0.5 %
+    2    37,001       1.685    -1.1 %    38,222       1.7 %     914.8  |      36,976       1.7 %
+    4    36,610       1.667    -2.1 %    39,593       5.3 %     947.6  |      36,590       5.2 %
+    8    35,813       1.631    -4.3 %    44,771      19.1 %    1071.5  |      35,819      18.5 %
+   16    34,341       1.564    -8.2 %    62,960      67.4 %    1506.8  |      34,344      67.5 %
+   32    31,724       1.445   -15.2 %   126,617     236.7 %    3030.3  |      31,749     235.2 %
+  wanted records 37,601; one read per call that misses anything would be 16,911 reads (-54.8 % vs t=0) -- the ceiling of ANY within-call coalescing, at whatever overfetch it took.
+
+  PRICED. Coalescing pays only if the larger read raises achieved bandwidth by more
+  than it adds bytes: need rate x1.191 at t=8, x1.674 at t=16, x3.367 at t=32.
+  Measured headroom (notes/gb10-arena-io-measured.md sec.3): ONE whole-expert O_DIRECT
+  pread (18.8 MB, already larger than a CB3 record) gives 5.58 GB/s and the device
+  ceiling at two concurrent reads is 6.82 GB/s -- so the
+  largest bandwidth factor any read-size change can buy is x1.22, and the engine already
+  runs ~6 reads in flight. Every tolerance above is on the wrong side of that.
+
+====================================================================================================
+  Q2b REPACK: does a LEARNED per-layer expert order make the misses contiguous?
+====================================================================================================
+  Four per-layer orderings, all fitted on the FIRST half of each layer's steps and scored
+  on the held-out second: identity (today), greedy seriation of the co-miss graph,
+  hot-first (sort by miss count), and random = the control for 'reordering at all'.
+    t    identity reads   seriation reads   hot-first reads      random reads
+    0      17,831    0 %      17,658    0 %      17,784    0 %      17,822    0 %
+    1      17,753    0 %      17,518    1 %      17,666    1 %      17,724    1 %
+    2      17,657    2 %      17,397    2 %      17,553    2 %      17,632    2 %
+    4      17,478    5 %      17,146    7 %      17,305    7 %      17,428    6 %
+    8      17,120   18 %      16,695   24 %      16,816   24 %      17,070   19 %
+   16      16,451   64 %      15,902   79 %      15,901   88 %      16,401   65 %
+   32      15,237  230 %      14,521  266 %      14,408  290 %      15,197  228 %
+
+  reads at MATCHED overfetch (interpolated) -- the only fair comparison between orders
+   overfetch      identity     seriation     hot-first        random
+          5 %        17,478        17,252        17,394        17,457
+         20 %        17,091        16,796        16,938        17,048
+         50 %        16,656        16,318        16,446        16,615
+        100 %        16,188        15,747        15,809        16,142
+  held-out wanted records 17,913, identity t=0 reads 17,831
+
+====================================================================================================
+  Q3  TOKEN-IDENTITY CONDITIONING
+====================================================================================================
+  fields present in the log: ['L', 'i', 'miss', 'pf', 'uniq']
+  NO TOKEN ID in this trace. Not measurable here, and there is no honest proxy: the
+  call index gives position, not identity, and the active set cannot stand in for the
+  token without assuming the very thing the question asks. SKIPPED -- it needs a
+  re-trace with the token id logged per resolve call.
+
+====================================================================================================
+  Q4  SLOW STATE / DRIFT
+====================================================================================================
+  mean Jaccard of a layer's ACTIVE set at step t vs t+d
+      d   Jaccard   excess over random-pair null
+      1    0.3492                          2.04x
+      2    0.2808                          1.64x
+      4    0.2317                          1.35x
+      8    0.2080                          1.21x
+     16    0.1966                          1.15x
+     32    0.1883                          1.10x
+     64    0.1777                          1.04x
+    128    0.1720                          1.00x
+  random-pair null (two steps of the same layer, drawn at random): 0.1715
+
+====================================================================================================
+  SCOPE: one decode trace, 548 steps, the shipped arena's own hit/miss decisions.
+  Nothing here is measured at another cache size, another corpus, or in prefill.
+====================================================================================================
