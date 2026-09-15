@@ -54,13 +54,14 @@ def load(path: str, decode_only: bool):
     return seq, calls
 
 
-def lru(seq, slots):
+def lru(seq, slots, score_from: int = 0):
+    """`score_from` warms the cache on seq[:score_from] without counting those accesses."""
     cache = collections.OrderedDict()
     hits = 0
-    for k in seq:
+    for i, k in enumerate(seq):
         if k in cache:
             cache.move_to_end(k)
-            hits += 1
+            hits += (i >= score_from)
         else:
             if len(cache) >= slots:
                 cache.popitem(last=False)
@@ -68,7 +69,7 @@ def lru(seq, slots):
     return hits
 
 
-def belady(seq, slots):
+def belady(seq, slots, score_from: int = 0):
     """Evict the resident entry whose next use is furthest in the future.
 
     next_use[i] = the next index where seq[i] recurs, or +inf. The heap is max-by-next_use with
@@ -83,7 +84,7 @@ def belady(seq, slots):
     cache, heap, hits = {}, [], 0
     for i, k in enumerate(seq):
         if k in cache:
-            hits += 1
+            hits += (i >= score_from)
         elif len(cache) >= slots:
             while True:                       # lazy deletion
                 neg, kk = heapq.heappop(heap)
@@ -146,9 +147,14 @@ def main() -> int:
     scored = len(seq) - cut
     h_lru_full = lru(seq, a.slots)
     h_bel_full = belady(seq, a.slots)
-    # score LRU/Belady on the same suffix the ranked policies see, so the column is comparable
-    h_lru = lru(seq[cut:], a.slots)
-    h_bel = belady(seq[cut:], a.slots)
+    # Warm LRU and Belady on the SAME prefix the ranked policies rank on, and count hits only over
+    # the suffix. Scoring them from an empty cache while static_ranked and segmented start with
+    # their chosen set already resident is not apples-to-apples: it hands the static policies a free
+    # warm cache and charges the adaptive ones every compulsory miss. That bias is large enough to
+    # invent a result -- it is why an earlier run had `segmented` beating LRU by 1.0 pp, which was
+    # the warm-up, not the policy. External review, 2026-09-15.
+    h_lru = lru(seq, a.slots, score_from=cut)
+    h_bel = belady(seq, a.slots, score_from=cut)
     h_st, _ = static_ranked(seq, a.slots, a.rank_frac)
     h_sg, _ = segmented(seq, a.slots, a.rank_frac)
 

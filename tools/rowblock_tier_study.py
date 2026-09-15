@@ -39,6 +39,31 @@ THE METRIC, and why this shape of it.
 Reads only ~13.8 MB per sampled expert out of a 211 GB file by O_DIRECT. No server, no full model.
 
   python tools/rowblock_tier_study.py --sample 8
+
+
+SCOPE LIMIT -- read this before quoting the verdict (external review, 2026-09-15).
+
+This tool derives CB2 from CB3-dequantised weights, because the FP4 shards were not on the box when
+it was written. That is NOT the proposed format. The proposal is
+
+    block A:  FP4 -> optimal CB3          block B:  FP4 -> optimal CB2
+
+and those quantisers are independent: CB3 picks an optimal 8-subset of the 16 FP4 levels, CB2 picks
+an optimal 4-subset, and the 4-subset is NOT nested inside the 8. Deriving CB2 from CB3 restricts it
+to levels CB3 happened to keep, which can flatten exactly the heterogeneity the study is looking for.
+It also forces err(CB3) == 0 by construction, so the incremental error dE = E_CB2 - E_CB3 collapses
+to E_CB2 and cannot be ranked per byte saved as the format would require.
+
+Two further limits: 8 experts is ~2,432 strongly correlated blocks, not 2,432 independent samples;
+and unweighted weight-space Frobenius error is a cheap rejector, not a sensitivity measure -- two
+blocks with identical reconstruction error can have very different output effect under real
+activation statistics.
+
+What this tool DOES support: within these experts, weight reconstruction error is remarkably
+homogeneous (p1 32.0 %, p99 33.5 %, p90/p10 1.02), so selecting blocks by WEIGHT ERROR will not
+work. It does not close mixed row tiering. The decisive test needs original FP4 for 64-128 experts
+across all 40 layers, independent FP4->CB3 and FP4->CB2 per block, and ranking by dE per byte saved
+-- ideally activation-weighted.
 """
 import argparse
 import os
@@ -260,7 +285,7 @@ def main():
     print(f"    damage carried by the cheapest HALF of blocks   {half * 100:5.1f} %   (needs < 25 %)")
     print(f"    p90/p10 spread of the block error               {spread:5.2f}     (needs > 1.50)")
     worth = half < 0.25 and spread > 1.5
-    print(f"    row-block-adaptive CB2/CB3 worth building?      {'YES' if worth else 'NO'}")
+    print(f"    weight-error-selected CB3->CB2 tiering worth building?      {'YES' if worth else 'NO'}")
     if not worth:
         print("    The blocks are interchangeable: every 32-row block loses the same share of its")
         print("    norm to the dropped plane, so choosing WHICH blocks drop it buys nothing over")

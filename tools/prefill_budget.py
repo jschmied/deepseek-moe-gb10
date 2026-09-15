@@ -72,11 +72,18 @@ def main() -> int:
     osr = merge(c.execute("select start,end from OSRT_API where globalTid=?", (main_tid,)))
     in_api = sum(b - a for a, b in api) / 1e9
     in_os = sum(b - a for a, b in osr) / 1e9
+    # The two categories OVERLAP -- a syscall made inside a CUDA API call sits in both tables -- so
+    # `span - in_api - in_os` double-subtracts and the remainder is wrong. Compute the union and
+    # report the overlap explicitly. And the remainder is NOT "pure Python": it is time in neither
+    # traced table, which includes native CPU work nsys did not sample. External review, 2026-09-15.
+    both = cover(api, osr)
+    union = in_api + in_os - both
     print(f"\n  prefill span {span:.1f} s, main thread {main_tid}\n")
-    print(f"  {'inside a CUDA API call':32s} {in_api:7.1f} s ({100 * in_api / span:4.0f} %)")
-    print(f"  {'inside a syscall':32s} {in_os:7.1f} s ({100 * in_os / span:4.0f} %)")
-    print(f"  {'neither (pure Python)':32s} {span - in_api - in_os:7.1f} s "
-          f"({100 * (span - in_api - in_os) / span:4.0f} %)")
+    print(f"  {'inside a CUDA API call':34s} {in_api:7.1f} s ({100 * in_api / span:4.0f} %)")
+    print(f"  {'inside a syscall':34s} {in_os:7.1f} s ({100 * in_os / span:4.0f} %)")
+    print(f"  {'  ... both at once (overlap)':34s} {both:7.1f} s")
+    print(f"  {'in neither traced table':34s} {span - union:7.1f} s "
+          f"({100 * (span - union) / span:4.0f} %)   not necessarily Python")
 
     print("\n  top CUDA API by time on the main thread:")
     for nid, n, t in c.execute(
@@ -102,7 +109,9 @@ def main() -> int:
     print(f"    with an NVMe read in flight  {r:7.1f} s ({100 * r / W:4.0f} %)")
     print(f"    with a GPU kernel running    {k:7.1f} s ({100 * k / W:4.0f} %)")
     print(f"    with an H2D copy in flight   {m:7.1f} s ({100 * m / W:4.0f} %)")
-    print(f"    with NOTHING at all          {W - anyb:7.1f} s ({100 * (W - anyb) / W:4.0f} %)  <- pure overhead")
+    print(f"    no tracked NVMe/GPU work    {W - anyb:7.1f} s ({100 * (W - anyb) / W:4.0f} %)")
+    print("      (tracked = preadv/pread, kernels, memcpy. CPU work on any thread is invisible\n"
+          "       here, so this is an upper bound on idleness, not proof of it.)")
 
     busy = sum(b - a for a, b in kern) / 1e9
     nl = c.execute("select count(*) from CUPTI_ACTIVITY_KIND_KERNEL").fetchone()[0]
