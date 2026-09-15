@@ -57,13 +57,26 @@ for n in LENS:
         # rather than crashing the whole sweep on its last arm, which is what the first run did.
         print(f"  {n:>7} {pt:>11}  NO OUTPUT (prompt over max_seq, or server error)", flush=True)
         continue
+    # TWO nvme columns on purpose. `dev_gb` is /proc/diskstats for nvme0n1, i.e. WHOLE-DEVICE reads
+    # in the TTFT window, so it charges this request with anything else touching the disk -- and
+    # because the window is the TTFT itself, a slow rep collects more foreign traffic and inflates
+    # twice over. `nvme_gb` is the engine's own store counter. Every NVMe figure quoted from this
+    # tool before 2026-09-15 was the device column; one of them (275.5 GB vs 87.6) was read as a
+    # cache pathology and turned out to be 3 prefill chunks plus foreign traffic.
     pre_gb = (r_at_ttft - r0) / 1e9
     rows.append(dict(target=n, prompt_tokens=pt, ttft=ttft, prefill_tok_s=pt / ttft,
                      prefill_nvme_gb=pre_gb, mb_per_prompt_tok=pre_gb * 1000 / pt,
+                     engine_nvme_gb=(st or {}).get("nvme_gb"),
+                     expert_misses=(st or {}).get("expert_misses"),
+                     prefill_expert_misses=(st or {}).get("prefill_expert_misses"),
+                     expert_hit_rate=(st or {}).get("expert_hit_rate"),
                      decode_tok_s=k / max(tot - ttft, 1e-9)))
     r = rows[-1]
     print(f"  {n:>7} {pt:>11} {r['ttft']:>8.1f} {r['prefill_tok_s']:>10.1f} "
-          f"{r['prefill_nvme_gb']:>9.1f} {r['mb_per_prompt_tok']:>8.1f} {r['decode_tok_s']:>7.2f}", flush=True)
+          f"{r['prefill_nvme_gb']:>9.1f} {r['mb_per_prompt_tok']:>8.1f} {r['decode_tok_s']:>7.2f}"
+          f"  | engine {r['engine_nvme_gb'] if r['engine_nvme_gb'] is not None else float('nan'):>7.1f} GB"
+          f"  miss {r['expert_misses']}/{r['prefill_expert_misses']}"
+          f"  hit {r['expert_hit_rate'] if r['expert_hit_rate'] is not None else float('nan'):.4f}", flush=True)
 json.dump(rows, open(os.path.expanduser("~/ds41-queue/logs/longctx.json"), "w"), indent=1)
 print("\n  a prompt cache removes the TTFT column for every turn after the first in a conversation.")
 print("== ALL DONE ==")
