@@ -42,7 +42,7 @@ Measurement rules, learned the hard way:
   arm shows it -- and a byte-free win would be the better thing to build.
 
 Usage:
-    prefetch_oracle.py ~/ds41-queue/logs/route-decode.jsonl [--slots 4788] [--prefix 0.25]
+    prefetch_oracle.py ~/ds41-queue/logs/route-decode.jsonl [--slots 5328] [--prefix 0.25]
 CPU only; no GPU, no server.
 """
 
@@ -60,7 +60,12 @@ N_LAYERS = 40
 # 17.93 MiB of payload (notes/native-cb3-expert-cache.md). The CB3 arena slot it lands in is
 # 14,454,784 B, but the arena is filled FROM the checkpoint, so NVMe traffic is priced at the FP4
 # size. A prefetch costs exactly the same as a demand miss -- that is the whole tension here.
-EXPERT_BYTES = 18_800_640
+# What a MISS actually costs in NVMe bytes on the shipped server: one native CB3 record, not the
+# packed-FP4 checkpoint expert. The arena SLOT is 14,454,784 B (scales expanded) but the disk read
+# is the record. Using the FP4 number inflated every absolute MiB/token by 1.36x; the normalised
+# xLRU column was unaffected, since every policy is multiplied by the same constant.
+# External review, 2026-09-15.
+EXPERT_BYTES = 13_774_848
 
 
 def load(path: str):
@@ -342,8 +347,8 @@ def miss_coverage(calls, slots, cut, preds):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("log")
-    ap.add_argument("--slots", type=int, nargs="+", default=[4788, 3000],
-                    help="engine lru_slots (n_slots - transient) is 4788; 3000 checks rank stability")
+    ap.add_argument("--slots", type=int, nargs="+", default=[5328, 3000],
+                    help="shipped lru_slots = n_slots - transient = 5728 - 400 = 5328; 3000 checks rank stability")
     ap.add_argument("--prefix", type=float, default=0.25, help="warm-up / fitting fraction")
     a = ap.parse_args()
 
@@ -362,7 +367,7 @@ def main() -> int:
           f"{tokens:.1f} tokens, {accesses / tokens:.0f} accesses/token")
     print(f"  warm on calls [0,{cut:,}) = {100 * cut / len(calls):.0f} %, score the rest "
           f"({len(calls) - cut:,} calls, {(len(calls) - cut) / N_LAYERS:.0f} tokens)")
-    print(f"  one fetch = {EXPERT_BYTES / 2**20:.2f} MiB of NVMe (packed FP4 checkpoint)\n")
+    print(f"  one fetch = {EXPERT_BYTES / 2**20:.2f} MiB of NVMe (one native CB3 disk record)\n")
 
     print("  RAW SET OVERLAP -- no cache involved, the cheap kill-shot check")
     print(f"  {'predictor':32s} {'|S&P|/|S|':>10s} {'|P| experts':>12s} {'chance':>8s}")
@@ -431,11 +436,19 @@ def main() -> int:
     print("  wasted = prefetched slots evicted before anything asked for them.")
     print("  The deciding column is MiB/token. Anything with xLRU > 1.00 moves MORE bytes than the")
     print("  policy we already ship, which is the opposite of the point.\n")
-    print("  VERDICT, and the mechanism behind it: LRU already retains tens of tokens of history, so")
-    print("  every expert a k<=8-token predictor can name is ALREADY RESIDENT -- 0.0 % of LRU's misses")
-    print("  at 4,788 slots. The misses are the experts NOT used for a median of 45 tokens, so the")
-    print("  lookahead this would need is ~45 tokens, not the 1 token P1 has or the 5-8 a drafter")
-    print("  gives. Cross-layer (P3) is at chance (5.5 % overlap vs 5.7 % random) and is pure noise.")
+    print("  VERDICT -- SHORT-HISTORY RECURRENCE PREDICTORS ARE CLOSED, and that is all this tool")
+    print("  tests. The mechanism: LRU already retains tens of tokens of history, so every expert a")
+    print("  k<=8-token predictor can name is ALREADY RESIDENT -- 0.0 % of LRU's misses. The misses")
+    print("  are experts NOT used for a median of 45 tokens, so the lookahead needed is ~45 tokens,")
+    print("  not the 1 token P1 has or the 5-8 a drafter gives.")
+    print()
+    print("  WHAT THIS DOES *NOT* CLOSE: P3 here is the naive identity map (expert e at L-1 predicts")
+    print("  expert e at L) and is at chance -- 5.5 % overlap against a 5.7 % random baseline. That is")
+    print("  NOT the cross-layer predictor we already measured. notes/ds41-measured-2026-09-13.md")
+    print("  section 18 fitted per-source-layer TRANSITION TABLES and converted 32.4 % of misses at")
+    print("  1.5x overfetch, seven times the 4.3 % popularity baseline -- real signal, rejected on")
+    print("  economics (+118 % bytes), not on absence. A learned transition table is a strictly")
+    print("  stronger predictor than anything here; do not cite this tool as having closed it.")
     return 0
 
 
