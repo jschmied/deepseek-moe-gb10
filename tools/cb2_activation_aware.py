@@ -51,6 +51,15 @@ def run():
     from engine.codebook_sim import CodebookSim
     import statistics as st
 
+    # ACTIVATION CACHE. Capturing needs a 65 s engine load and ~24 GB; the comparison itself needs
+    # neither. Cache so a variant sweep costs seconds instead of a load each.
+    cache = os.path.expanduser("~/ds41-queue/logs/cb2-acts.pt")
+    if os.path.exists(cache) and os.environ.get("RECAPTURE") != "1":
+        blob = torch.load(cache)
+        acc, n, samples = blob["acc"], blob["n"], {k: v.cuda() for k, v in blob["samples"].items()}
+        print(f"  loaded cached activations for layers {sorted(samples)} ({blob['tokens']} tokens)")
+        return compare(acc, n, samples)
+
     eng = V41Engine(os.path.expanduser("~/dsv41-lean"), max_seq=8192,
                     arena_gb=float(os.environ.get("ARENA_GB", 40)), spec=True, expert_format="cb3")
     m = eng.model
@@ -97,6 +106,15 @@ def run():
             break
     m.moe_fn = orig
     print(f"  captured {tot} tokens; layers with samples: {sorted(samples)}", flush=True)
+    torch.save({"acc": {k: v.cpu() for k, v in acc.items()}, "n": n,
+                "samples": {k: v.cpu() for k, v in samples.items()}, "tokens": tot}, cache)
+    return compare(acc, n, samples)
+
+
+def compare(acc, n, samples):
+    import v41_ref as R
+    from engine.codebook_sim import CodebookSim
+    import statistics as st
 
     sim2 = CodebookSim(2, "cuda")
     sim3 = CodebookSim(3, "cuda")
@@ -110,7 +128,7 @@ def run():
     for L in LAYERS:
         if L not in samples:
             continue
-        x = samples[L]
+        x = samples[L].cuda() if not samples[L].is_cuda else samples[L]
         aw = (acc[L] / max(1, n[L]))
         for e in range(a.experts):
             for mat in ("w1", "w3"):
