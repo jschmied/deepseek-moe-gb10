@@ -43,6 +43,9 @@ ap.add_argument("--experts", type=int, default=4)
 ap.add_argument("--tokens", type=int, default=2048)
 a = ap.parse_args()
 LAYERS = [int(x) for x in a.layers.split(",")]
+# Free-level codebook sizes to sweep. 4 = 2 bits (today's CB2 width), 8 = 3 bits (CB3's width),
+# 6 = 2.58 bits -- the one that answers "what width does a FREE codebook need to match grid CB3".
+FREE_K = [int(x) for x in os.environ.get("FREE_K", "4,6,8").split(",")]
 
 
 def run():
@@ -121,10 +124,14 @@ def compare(acc, n, samples):
     # THE REAL FP4 SOURCE, fetched by byte range from the backup checkpoint (tools/fetch_fp4_experts.py).
     # Requantizing from the CB3 arena instead would be 4-of-8 rather than 4-of-16 and would not be
     # comparable to the -2.16 pp result at all.
-    src = torch.load(os.path.expanduser("~/dsv41-fp4-partial/experts.pt"))
+    src = {}
+    for f in sorted(__import__("glob").glob(os.path.expanduser("~/dsv41-fp4-partial/experts*.pt"))):
+        src.update(torch.load(f))
+    print(f"  {len(src)} FP4 tensors loaded from {os.path.expanduser('~/dsv41-fp4-partial')}")
+    missing = []
     print(f"\n  {'layer':>5} {'expert':>6} {'mat':>3} {'CB3':>9} {'CB2 weight':>11} "
           f"{'CB2 act':>9} {'CB2 free':>9}")
-    agg = {"cb3": [], "w": [], "act": [], "free": []}
+    agg = {t: [] for t in ["cb3", "w", "act"] + [f"free{k}" for k in FREE_K]}
     for L in LAYERS:
         if L not in samples:
             continue
@@ -135,15 +142,17 @@ def compare(acc, n, samples):
                 kw = f"layers.{L}.ffn.experts.{e}.{mat}.weight"
                 ks = f"layers.{L}.ffn.experts.{e}.{mat}.scale"
                 if kw not in src:
+                    missing.append(f"L{L}.e{e}.{mat}")
                     continue
                 w, s = src[kw].cuda(), src[ks].cuda()
                 ref = R.dequant_fp4_packed(w, s)
                 y0 = x @ ref.T.float()
                 errs = []
-                for tag, sim, extra in (("cb3", sim3, None), ("w", sim2, None),
-                                        ("act", sim2, aw), ("free", None, aw)):
+                variants = [("cb3", sim3, None), ("w", sim2, None), ("act", sim2, aw)]
+                variants += [(f"free{k}", None, (aw, k)) for k in FREE_K]
+                for tag, sim, extra in variants:
                     if sim is None:
-                        wq = requant_free(w, s, extra)
+                        wq = requant_free(w, s, extra[0], k=extra[1])
                     else:
                         q = sim.requant_packed(w, s) if extra is None else requant_act(sim, w, s, extra)
                         wq = R.dequant_fp4_packed(q, s)
@@ -155,11 +164,20 @@ def compare(acc, n, samples):
         mw, ma, m3 = st.mean(agg['w']), st.mean(agg['act']), st.mean(agg['cb3'])
         print(f"\n  mean output error   CB3 {m3:.5f}   CB2 weight {mw:.5f}   CB2 act {ma:.5f}")
         print(f"  activation weighting removes {(mw - ma) / mw * 100:.1f} % of CB2's output error")
-        mf = st.mean(agg['free'])
-        print(f"  CB2 with FREE levels {mf:.5f}")
+        import math
+        print(f"\n  free-level Lloyd-Max curve (same per-row codebook, levels unconstrained):")
+        print(f"    {'levels':>7} {'bits':>5} {'output err':>11} {'vs grid CB3':>12}")
+        for k in FREE_K:
+            mk = st.mean(agg[f"free{k}"])
+            print(f"    {k:>7} {math.log2(k):5.2f} {mk:11.5f} {(mk / m3 - 1) * 100:+11.1f}%")
+        mf = st.mean(agg[f"free{FREE_K[0]}"])
         if mw > m3:
             print(f"  activation weighting closes {(mw - ma) / (mw - m3) * 100:5.1f} % of the CB2 -> CB3 gap")
             print(f"  free levels        close  {(mw - mf) / (mw - m3) * 100:5.1f} % of the CB2 -> CB3 gap")
+        if missing:
+            print(f"\n  MISSING WEIGHTS, not measured: {len(missing)} -> {missing[:6]}"
+                  f"{' ...' if len(missing) > 6 else ''}  (fetch them, or the grid you asked for "
+                  f"is not the grid that ran)")
             if mf < m3:
                 print(f"  free-level 2-bit BEATS 3-bit-on-grid by {(m3 - mf) / m3 * 100:.1f} %")
 
@@ -187,7 +205,7 @@ def pack_fp4(wf: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def requant_free(w, s, actw=None, iters: int = 12):
+def requant_free(w, s, actw=None, iters: int = 12, k: int = 4):
     """What 2 bits could do if the 4 levels were NOT locked to the FP4 grid.
 
     Same 2 bits per weight and the same per-row codebook, but the four values are chosen freely by
@@ -206,12 +224,12 @@ def requant_free(w, s, actw=None, iters: int = 12):
     vals = FP4_VALS.to(w.device)[codes] * scale                      # [N, K] real weights
     wgt = torch.ones_like(vals) if actw is None else actw[None, :K].to(w.device).expand(N, K)
     # init on quantiles of each row, then alternate assign / recompute
-    q = torch.tensor([0.125, 0.375, 0.625, 0.875], device=w.device)
+    q = (torch.arange(k, device=w.device, dtype=torch.float32) + 0.5) / k
     cb = torch.quantile(vals.float(), q, dim=1).T.contiguous()       # [N, 4]
     for _ in range(iters):
         d = (vals.unsqueeze(-1) - cb.unsqueeze(1)).abs()             # [N, K, 4]
         a = d.argmin(dim=-1)
-        oh = torch.nn.functional.one_hot(a, 4).to(vals.dtype) * wgt.unsqueeze(-1)
+        oh = torch.nn.functional.one_hot(a, k).to(vals.dtype) * wgt.unsqueeze(-1)
         num = (oh * vals.unsqueeze(-1)).sum(1)
         den = oh.sum(1).clamp_min(1e-9)
         cb = num / den

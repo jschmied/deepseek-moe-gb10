@@ -53,3 +53,55 @@ COROLLARY, untested: the ratio 1.69 is BELOW the 1.85 the scalar bound predicts,
 further from ITS bound than free-level CB2 is from its own -- CB3 is grid-constrained too. Freeing
 CB3's levels would be a quality gain at unchanged size, and unlike the CB2 case the format already
 stores 8 codebook bytes per row.
+
+## The free-level width curve closes the corollary too (job 330, corrected)
+
+The corollary above predicted CB3 was grid-constrained and that freeing its levels would be quality
+at unchanged size. **Measured, and wrong.** Free-level Lloyd-Max at several codebook sizes, same
+real FP4 weights, same real activations, 5 layers x 3 experts:
+
+| levels | bits | output error | vs grid CB3 |
+|---|---|---|---|
+| 4 | 2.00 | 0.32244 | **+69.7 %** |
+| 6 | 2.58 | 0.23418 | **+23.2 %** |
+| 8 | 3.00 | 0.18885 | **-0.6 %** |
+| grid CB3 (8 of 16) | 3.00 | 0.19003 | — |
+
+Free levels at 3 bits beat the grid by **0.6 %**. So CB3's grid constraint costs essentially
+nothing, and freeing it is not a lever. At 4 levels the same constraint costs 6 % -- the grid only
+binds when the codebook is small relative to it.
+
+And there is no width between 2 and 3 bits that matches CB3: 2.58 free bits is still +23 % worse.
+
+## Why this checkpoint is not QTIP's setting
+
+**The source is already 4-bit.** These experts are stored as E2M1 codes -- 16 distinct values per
+row, times a UE8M0 scale per 32. So "CB3" is not 3-bit quantization of a continuous weight, it is
+choosing 8 of 16 available levels, and "CB2" is choosing 4 of 16. That is why free-vs-grid vanishes
+at 8 levels: with a 16-level source, 8 free levels and 8 grid levels have almost the same reach.
+
+This matters for the trellis/QTIP direction, and the continuous-source arithmetic sets the ceiling:
+
+* Gaussian rate-distortion gives 6.02 dB per bit, so R=2 is 12.04 dB; scalar Lloyd-Max at 2 bits
+  reaches 9.30 dB and at 3 bits 14.62 dB.
+* So an OPTIMAL 2-bit vector quantizer -- the rate-distortion bound, which no implementation
+  reaches -- is still **2.58 dB short of 3-bit scalar**. Trellis coding cannot make 2 bits match 3.
+* Converting that bound to this measurement: the full VQ gain at 2 bits would take 0.32244 down to
+  about 0.235, which is where the 2.58-bit free-scalar point already sits (0.23418) -- **+23 %
+  against CB3, not parity**.
+
+The measured curve and the information-theoretic bound agree, which is the useful part: K=2 trellis
+should be expected to land near "2.6 effective bits", not near CB3.
+
+So the honest framing for a QTIP/EXL3 project here is a TRADE, not a free win: roughly +23 % output
+error for a 31 % smaller record (9.99 against 14.45 MB) and ~45 % more resident experts. Given
+capacity is the largest measured lever on this box, that trade may well be worth taking -- but it
+must be gated on paired NLL and a long free-generation check, not on the size arithmetic.
+
+Two further cautions specific to us, neither of which QTIP's published results address:
+* Their numbers quantize BF16 originals. Re-quantizing an FP4-native checkpoint has strictly less
+  headroom, and the 8-level result above is direct evidence that the 16-level source is already
+  binding.
+* Incoherence processing (random rotations) is where much of QTIP's gain comes from, and it
+  reshapes the source distribution. On a source that is already a 16-point grid times block scales,
+  how much of that gain survives is unknown and is the first thing to measure.
