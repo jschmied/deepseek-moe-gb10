@@ -159,3 +159,40 @@ acceptance are both real. Job 140 had said so from the start and was explained a
 NOT YET VERIFIED ON A LIVE SERVER: the change is in `.env` but no server has been started since.
 First start should be checked for the policy actually taking effect and for the expected drop in
 `nvme_gb` per token in `x_engine_stats`.
+
+## Engram is an IOPS cost, not a bytes cost (job 365)
+
+It had been written off on bytes -- 45.6 MB across 600 steps against 556-660 GB of expert traffic,
+0.008 % -- and that was the wrong metric on a device whose binding constraint is operations, not
+bandwidth. Measured with the engine's own counters, 600 steps, 79 GB, engram live:
+
+| | lru | age_over_freq |
+|---|---|---|
+| rows | 288/step | 288/step |
+| **preads** | **575/step** | **575/step** |
+| bytes | 45.6 MB total | 45.6 MB total |
+| **read_s** | **9.90 s = 3.3 % of wall** | **11.01 s = 4.0 %** |
+| dequant+H2D | 2.98 s = 1.0 % | 2.90 s = 1.0 % |
+| **per row** | **57 us** | **64 us** |
+
+**575 preads per step against roughly 67-80 expert reads** -- engram issues about **7x more I/O
+operations** than the stream it was called negligible beside, and costs 3.3-4.0 % of wall to do it.
+`engine/engram.py:60` does TWO preads per row, weight then scale, at separate offsets. One
+contiguous 264 B record would halve the operation count with no format change beyond a repack.
+
+**57-64 us per row also answers the page-cache question.** A page-cache hit is ~1-5 us; these are
+device reads. So the kernel's page cache is NOT serving engram, which is what the working-set
+arithmetic predicted: 203 GB of tables (768,022,850 rows x 264 B) against the ~20 GB the engine's
+`keep_free` reserve leaves. The cache holds ~10 % of the set and evidently misses anyway.
+
+Consequence: the 20 GB reserve is not earning its keep as page cache for engram. Reallocated to the
+expert arena it is +1,383 slots at 14.455 MB, taking 5,465 -> 6,848 (+25 %), against an arena sweep
+where +208 slots bought +4.3 %. Bounded by the safety floor -- job 150 exists because a shipped
+chunk-4096 default left 4 GiB MemAvailable and the watchdog stopped the server -- so the
+recoverable slice is less than 20 GB and needs the sizer's auto/refusal disagreement settled first.
+
+Also done 2026-09-16: removed `/swapfile-fnext`, 64 GB of unused swap left over from the
+decommissioned Flash-Next work, sitting on the same NVMe the experts stream from. Swap 79 -> 15 GB
+(`/swap.img` kept as the OOM net, since cgroups cannot cap this engine), disk free 134 -> 198 GB.
+`vm.swappiness` was already 10 and is unchanged. The 24 GB swapped out since boot was almost
+certainly today's duplicate-engine incidents, not a tuning problem.
