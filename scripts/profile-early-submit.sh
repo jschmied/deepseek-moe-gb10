@@ -5,7 +5,17 @@
 # Needs scripts/enable-gpu-profiling.sh applied AND a reboot (it is a module load parameter).
 # Verify first:  nsys profile --gpu-metrics-devices=help   must list the GB10.
 #
-# Two things the first version of this script got wrong, both fatal, both silent:
+# THREE things this script got wrong, all fatal, all silent. The third was found 2026-09-16 and
+# invalidated a number quoted for two days:
+#   * WITHOUT --cuda-graph-trace=node, Nsight records each CUDA graph launch as ONE activity and
+#     never emits its constituent kernel nodes. Decode runs entirely in captured graphs, so
+#     CUPTI_ACTIVITY_KIND_KERNEL -- which is all prefill_budget.py counted -- saw only the
+#     non-graph work. Measured on the existing report: KERNEL 2.99 s against GRAPH_TRACE 21.29 s
+#     over the same 104 s span. GPU busy was 24.28 s (23.3 %), not 3.0 s (2.9 %), and the tell was
+#     visible all along in job 175's own table: _moe_up_kernel showed 40 launches, exactly ONE
+#     step's worth of layers across ~180 steps.
+#
+# Two things the FIRST version of this script got wrong, both also fatal and silent:
 #   * `nsys profile ./start.sh` profiles a shell that exits in a second. start.sh launches the
 #     server with nohup and returns, so the traced process tree is empty and no report is written.
 #     The profiler has to be injected where the interpreter actually starts -- start.sh resolves
@@ -29,7 +39,7 @@ SESSION=ds41prof
 # the seam: start.sh nohups "$PYTHON" server/app.py, so this is what gets traced.
 cat > "$T/nsys-python" <<EOF
 #!/bin/bash
-exec nsys launch --session-new=$SESSION -t cuda,osrt -n true "$REALPY" "\$@"
+exec nsys launch --session-new=$SESSION -t cuda,osrt --cuda-graph-trace=node -n true "$REALPY" "\$@"
 EOF
 chmod +x "$T/nsys-python"
 

@@ -14,7 +14,7 @@ half the time.
 |---|---|
 | depth 0 (no expert read in flight), 40 GB arena | **44.3 %** of the span |
 | same, 79 GB arena | **51.6 %** |
-| GPU kernel time per step | 16.7 ms of ~437 ms |
+| GPU busy per step (CORRECTED, see below) | **135 ms** of ~578 ms |
 | oracle prefetch, horizon 1, **same bytes read** | **+37.8 %** (40 GB), **+36.0 %** (79 GB) |
 
 The oracle reads 1896 records against the null arm's 1895 — the entire win is *when* the reads
@@ -25,6 +25,43 @@ start, not readiness. Horizon 2 adds only 4 points.
 Depth-zero **rises** as the cache improves (45.9 % -> 51.6 % going 40 -> 79 GB). A better cache
 means fewer misses per layer, which means less work available to keep the device busy. The pipe
 gets emptier as the engine gets faster.
+
+## CORRECTION: the "3.8 % compute ceiling" was wrong by 8x
+
+Everything this note said about compute being negligible came from `GPU_BUSY_S = 3.0` over a 104 s
+span. That number counted `CUPTI_ACTIVITY_KIND_KERNEL` only, while the profiler ran without
+`--cuda-graph-trace=node`. Nsight then records each CUDA graph LAUNCH as a single activity and
+emits no kernel rows for its nodes -- and decode runs entirely in captured graphs. So the table
+held only the non-graph work.
+
+Queried directly from the existing report:
+
+| | |
+|---|---|
+| span | 104.08 s |
+| `CUPTI_ACTIVITY_KIND_KERNEL` | 2.99 s = 2.9 % |
+| `CUPTI_ACTIVITY_KIND_GRAPH_TRACE` | **21.29 s = 20.5 %** |
+| union (real GPU busy) | **24.28 s = 23.3 %** |
+
+So GPU busy is **135 ms/step, not 16.7 ms**, and compute/IO overlap is bounded at **~23 %, not
+3.8 %**. The tell was in job 175's own table the whole time: `_moe_up_kernel` reported **40
+launches** -- exactly one step's 40 layers -- across ~180 steps. Only the eager warm-up pass was
+ever counted.
+
+This probably also explains the open "136 vs 451 ms/step 3.3x gap": 135 ms/step is GPU busy
+including graph nodes, 451 ms is the e2e step, and the difference is real idle rather than a
+measurement discrepancy.
+
+WHAT SURVIVES UNCHANGED: the oracle margin, the depth-zero fractions and the capacity/skew results.
+None of them come from CUPTI -- they are wall-clock and the loader's own nvme brackets.
+
+WHAT IS NOW SUSPECT: the per-phase split (`F_IND` 0.0105, `SHARE_MOE` 0.185, `SHARE_ATTN_HC` 0.020)
+was computed by kernel NAME over that same undercounted table, so it describes the non-graph
+population. Every conclusion derived from it -- including "forking the shared expert is worth
+0.04 %" -- needs the phase split redone with node tracing before it can be quoted.
+
+Fixed in `scripts/profile-early-submit.sh` (adds `--cuda-graph-trace=node`) and
+`tools/prefill_budget.py` (unions the graph table, idempotently).
 
 ## Why the layer cannot fill its own pipe
 
@@ -74,7 +111,7 @@ symbols — a top-36 % holding 60 % still scores ~8.42.
 | oracle prefetch h=1 | +36 to +38 %, same bytes |
 | Belady vs LRU (1500 slots) | +19.0 pp hit, 47 % less NVMe |
 | protection (segmented vs LRU) | 90.7 % vs 90.5 % — near null |
-| compute/IO overlap, all of it | bounded at 3.8 % |
+| compute/IO overlap, all of it | bounded at **~23 %** (was misstated as 3.8 %) |
 
 Protection is near-null because LRU already keeps the hot set *when it fits*. At 40 GB it does not:
 the hot quartile is 96 x 40 = 3,840 pairs against 2,767 slots, which is why 33.6 % of misses there

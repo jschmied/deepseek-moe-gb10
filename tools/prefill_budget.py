@@ -101,7 +101,17 @@ def main() -> int:
     W = sum(b - a for a, b in wait) / 1e9
     reads = merge(list(c.execute("select start,end from OSRT_API where nameId=?", (sid["preadv64v2"],)))
                   + list(c.execute("select start,end from OSRT_API where nameId=?", (sid["pread64"],))))
-    kern = merge(c.execute("select start,end from CUPTI_ACTIVITY_KIND_KERNEL"))
+    # GRAPH NODES COUNT. Without --cuda-graph-trace=node Nsight emits one activity per graph
+    # LAUNCH and no kernel rows for its nodes, so on a graph-driven decode this table holds only
+    # the non-graph work. Union the two rather than picking one: with node tracing on, nodes appear
+    # in KERNEL and the graph rows would double-count; merge() makes the union idempotent either
+    # way. Measured 2026-09-16: KERNEL 2.99 s, GRAPH_TRACE 21.29 s, union 24.28 s over 104 s.
+    _k = list(c.execute("select start,end from CUPTI_ACTIVITY_KIND_KERNEL"))
+    try:
+        _k += list(c.execute("select start,end from CUPTI_ACTIVITY_KIND_GRAPH_TRACE"))
+    except Exception:
+        pass                                   # older reports have no graph table at all
+    kern = merge(_k)
     cp = merge(c.execute("select start,end from CUPTI_ACTIVITY_KIND_MEMCPY"))
     r, k, m = cover(wait, reads), cover(wait, kern), cover(wait, cp)
     anyb = cover(wait, merge([list(x) for x in reads] + [list(x) for x in kern] + [list(x) for x in cp]))
