@@ -129,3 +129,33 @@ are top-quartile experts. At 79 GB (5,679 slots) it fits.
 - **`DSV41_BLOCK=3`** is untested and the trend favours it: BLOCK=7 measures 4.83 tok/s / 266 GB
   against BLOCK=5's 6.08 / 221, and the BLOCK=3 arm fails with `index 3 is out of bounds for
   dimension 0 with size 3` — a real bug blocking the only arm that tests narrower.
+
+## SHIPPED 2026-09-16: DSV41_EVICT_POLICY=age_over_freq
+
+Set in `~/git/deepseek-v41-flash-spark/.env` line 33. **That file is gitignored**, so this record
+is the only version-controlled trace of the change; the code default remains `lru` and commenting
+the line out reverts it.
+
+Evidence, two independent harnesses agreeing in direction:
+
+| | lru | age_over_freq |
+|---|---|---|
+| job 140, server, 3 reps | 1.74 / 1.85 / 1.86 tok/s | 1.88 / 2.13 / 2.14 |
+| job 360, v2 real loop, 600 steps x 2 | 5.80 / 5.94 tok/s | **6.32 / 6.35 (+8.0 %)** |
+| reads per committed token | 27.1 | **22.8** |
+| MB per committed token | 373.4 | **314.6** |
+
+Job 360 is the first measurement from the served loop -- DSpark draft, verify, rollback, tokens
+counted rather than inferred -- and 5.80-6.35 tok/s brackets production's 6.26, so the harness is
+measuring the engine the server runs.
+
+WHY THIS TOOK SIX ATTEMPTS. Jobs 310, 315, 320 and 345 all reported "the policies tie", each blind
+for a different reason: a flat-seeded policy with no use counts, a warm-up that replayed the timed
+window, a warm-up that remapped slots without loading them, and -- running through all of them -- a
+greedy `next_block` that collapsed to a repeating token, so the same experts were touched every
+step and no eviction decision could matter. The policy separates only when the token stream and the
+acceptance are both real. Job 140 had said so from the start and was explained away each time.
+
+NOT YET VERIFIED ON A LIVE SERVER: the change is in `.env` but no server has been started since.
+First start should be checked for the policy actually taking effect and for the expected drop in
+`nvme_gb` per token in `x_engine_stats`.
