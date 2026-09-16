@@ -221,20 +221,61 @@ def requant_free(w, s, actw=None, iters: int = 12, k: int = 4):
     lo = (w & 0x0F).long(); hi = ((w >> 4) & 0x0F).long()
     codes = torch.stack([lo, hi], dim=-1).reshape(N, K)
     scale = torch.exp2(s.float() - 127.0).repeat_interleave(32, dim=1)
-    vals = FP4_VALS.to(w.device)[codes] * scale                      # [N, K] real weights
-    wgt = torch.ones_like(vals) if actw is None else actw[None, :K].to(w.device).expand(N, K)
-    # init on quantiles of each row, then alternate assign / recompute
-    q = (torch.arange(k, device=w.device, dtype=torch.float32) + 0.5) / k
-    cb = torch.quantile(vals.float(), q, dim=1).T.contiguous()       # [N, 4]
-    for _ in range(iters):
-        d = (vals.unsqueeze(-1) - cb.unsqueeze(1)).abs()             # [N, K, 4]
-        a = d.argmin(dim=-1)
-        oh = torch.nn.functional.one_hot(a, k).to(vals.dtype) * wgt.unsqueeze(-1)
-        num = (oh * vals.unsqueeze(-1)).sum(1)
-        den = oh.sum(1).clamp_min(1e-9)
-        cb = num / den
-    d = (vals.unsqueeze(-1) - cb.unsqueeze(1)).abs()
-    return torch.gather(cb, 1, d.argmin(dim=-1))
+    # FIT IN THE NORMALIZED DOMAIN, so the per-32 group scale is KEPT. An earlier version fitted
+    # centroids to fully SCALED weights and returned them directly, which silently removed group
+    # scaling altogether -- that arm was not a relaxation of CB2, it was a different and weaker
+    # format, and any conclusion drawn from it about codebook placement was confounded.
+    # Withdrawn and corrected 2026-09-16.
+    lvl = FP4_VALS.to(w.device)[codes]                               # [N, K] grid level, unscaled
+    # The objective still lives in the scaled, activation-weighted domain: an error of e in the
+    # level costs (e * scale)^2 * E[x^2], so the fitting weight is scale^2 * act.
+    wgt = scale * scale
+    if actw is not None:
+        wgt = wgt * actw[None, :K].to(w.device)
+    # EXACT, not Lloyd. The source has only 16 distinct levels, so the weighted k-centroid problem
+    # is a 1-D partition over 16 sorted points and dynamic programming solves it optimally in
+    # O(16^2 k). Lloyd with quantile init was not just uncertain, it was WORSE than the exhaustive
+    # 4-of-16 grid search it was meant to beat (0.338 against 0.331) -- a solver artifact
+    # masquerading as "free levels do not help". Fixed 2026-09-16.
+    order = torch.argsort(FP4_VALS.to(w.device))
+    v = FP4_VALS.to(w.device)[order]                                  # [16] ascending
+    inv = torch.empty(16, dtype=torch.long, device=w.device)
+    inv[order] = torch.arange(16, device=w.device)
+    sidx = inv[codes]                                                 # [N, K] index into sorted v
+    W = torch.zeros(N, 16, device=w.device).scatter_add_(1, sidx, wgt)          # weight mass
+    # prefix sums -> weighted mean and SSE of any contiguous run [i..j]
+    cw = torch.cat([torch.zeros(N, 1, device=w.device), W.cumsum(1)], 1)
+    cwv = torch.cat([torch.zeros(N, 1, device=w.device), (W * v).cumsum(1)], 1)
+    cwv2 = torch.cat([torch.zeros(N, 1, device=w.device), (W * v * v).cumsum(1)], 1)
+    INF = torch.full((N,), 1e30, device=w.device)
+
+    def seg(i, j):                                                    # inclusive [i, j]
+        sw = cw[:, j + 1] - cw[:, i]
+        sv = cwv[:, j + 1] - cwv[:, i]
+        s2 = cwv2[:, j + 1] - cwv2[:, i]
+        return torch.where(sw > 0, s2 - sv * sv / sw.clamp_min(1e-30), torch.zeros_like(sw))
+
+    D = torch.stack([seg(0, j) for j in range(16)], 1)                # 1 cluster
+    back = [[None] * 16]
+    for _kk in range(1, k):
+        prev, nd, bk = D, [], []
+        for j in range(16):
+            cand = torch.stack([prev[:, i - 1] + seg(i, j) if i > 0 else INF
+                                for i in range(j + 1)], 1)
+            nd.append(cand.min(1).values); bk.append(cand.argmin(1))
+        D = torch.stack(nd, 1); back.append(bk)
+    # reconstruct boundaries, then the weighted centroid of each run
+    cb = torch.zeros(N, k, device=w.device)
+    j = torch.full((N,), 15, dtype=torch.long, device=w.device)
+    rows = torch.arange(N, device=w.device)
+    for t in range(k - 1, -1, -1):
+        i = torch.stack(back[t], 1)[rows, j] if t > 0 else torch.zeros_like(j)
+        sw = cw[rows, j + 1] - cw[rows, i]
+        sv = cwv[rows, j + 1] - cwv[rows, i]
+        cb[:, t] = torch.where(sw > 0, sv / sw.clamp_min(1e-30), v[j])
+        j = (i - 1).clamp_min(0)
+    d = (lvl.unsqueeze(-1) - cb.unsqueeze(1)).abs()
+    return torch.gather(cb, 1, d.argmin(dim=-1)) * scale              # group scale REAPPLIED
 
 
 @torch.no_grad()

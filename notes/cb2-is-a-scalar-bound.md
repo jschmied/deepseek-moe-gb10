@@ -54,6 +54,47 @@ further from ITS bound than free-level CB2 is from its own -- CB3 is grid-constr
 CB3's levels would be a quality gain at unchanged size, and unlike the CB2 case the format already
 stores 8 codebook bytes per row.
 
+## CORRECTED 2026-09-16 after review: the free-level arm was broken twice
+
+Everything below this heading from the first two sections' free-level numbers onward was wrong, in
+the same direction each time -- understating what a better codebook buys. Two defects, both found
+by review:
+
+1. **`requant_free` removed the group scales.** It fitted centroids to fully SCALED weights and
+   returned them directly, so that arm had one codebook per row covering all 160 groups and no
+   per-32 scale at all. It was not a relaxation of CB2, it was a different and weaker format.
+2. **Lloyd-Max with quantile init was not solving the problem.** At 4 levels it scored WORSE than
+   the exhaustive 4-of-16 grid search it was meant to beat (0.338 against 0.331) -- a solver
+   artifact reported as "free levels do not help". With only 16 distinct source levels the weighted
+   k-centroid problem is a 1-D partition and dynamic programming solves it exactly in O(16^2 k).
+
+Corrected -- group scales kept, exact DP, same weights and activations:
+
+| levels | bits | output error | vs grid CB3 |
+|---|---|---|---|
+| 4 | 2.00 | 0.32095 | +68.9 % |
+| 6 | 2.58 | 0.21636 | +13.9 % |
+| 8 | 3.00 | **0.15601** | **-17.9 %** |
+
+**CB3 IS grid-constrained, by 17.9 %.** My original corollary was right and the broken
+implementation is what appeared to refute it. Freeing CB3's levels lowers output error by 17.9 % at
+the SAME bit width -- and plausibly at the same size, because the format already carries 8 codebook
+bytes per row, which is exactly 8 fp8 values. Only the kernel's decode changes: an fp8 table lookup
+instead of nibble-to-FP4. That is now the cheapest quality lever on the page and it was hidden
+behind two bugs.
+
+The 2.58-bit point is +13.9 % against CB3, not the +23.2 % reported.
+
+WHAT DOES NOT SURVIVE: the Gaussian rate-distortion argument built on those numbers. It assumed a
+continuous source and a scalar bound, and was used to claim a 2-bit trellis "must" stay ~23 % worse.
+That was a hypothesis dressed as a bound, and with the corrected curve it does not even reproduce
+its own anchor. Withdrawn.
+
+WHAT STILL STANDS: activation weighting is worth 0.4 % -- it was never the free-level arm that
+carried that result, and the structural reason holds (the codebook is per ROW, the weighting per
+COLUMN). But "calibration is closed" overstates a diagonal-weighting test on w1/w3 only; w2 and a
+non-diagonal objective are untested.
+
 ## The free-level width curve closes the corollary too (job 330, corrected)
 
 The corollary above predicted CB3 was grid-constrained and that freeing its levels would be quality
