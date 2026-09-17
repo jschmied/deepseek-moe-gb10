@@ -138,6 +138,32 @@ and carries no KL or top-1-agreement figure -- so it is not a quality receipt we
 | Per-layer arena allocation | ~1 point (ds-05) | — |
 | CPU core pinning | +0.029 % against 0.751 % drift, sign flipped | — |
 
+## NEEDS REPEATING — measured under conditions now known to be wrong
+
+Job 420 showed every measurement before it ran with `global_barrier=True`, where `_wait()` blocks
+until `_demand == 0` and `_demand` falls only after `handle.synchronize()`. That does not merely add
+overhead: it **amplifies the cost of a miss**, because the driver waited for every outstanding copy
+rather than this layer's. Anything whose effect depends on the driver NOT already being blocked was
+measured in the one regime that would hide it.
+
+| result | why it is suspect | action |
+|---|---|---|
+| **Job 375**, out-of-order completer, +0.4 % "null" | its mechanism is a finished copy held behind a running one, which costs nothing while the driver waits for all copies anyway | **job 455** re-runs it at gb=0 AND gb=1 in one job |
+| **The oracle margin**, +37.8 % cold / +20.4 % warm (sections 3/11), and the "+81-84 % perfect oracle" built on it | both arms paid the barrier, but the oracle has fewer demand misses and the barrier multiplies what each miss costs, so its advantage is **likely overstated**. This is the load-bearing number behind "prediction is worth 1.2x-50x an async loader" in the standing argument | re-measure at gb=0 before that framing is quoted again |
+| Job 370, lock removal, 0.08 % | same masking | **not worth the box time** — 420 already bounds the whole family at ~1 % |
+
+**Re-baseline, not re-measure:** `DSV41_SHARED_FIRST=1` is now in production `.env`, so any
+SERVER-side number from before 2026-09-17 is against a different configuration. Engine-side jobs set
+their env explicitly and are unaffected.
+
+**Does NOT need repeating** — both arms shared the condition, so the comparison holds: the arena
+result (+10.1 %), `age_over_freq` (+8 %, measured on real tokens rather than trace replay; the
+replay-based eviction work was already withdrawn), and the per-graph budget (A 46.1 / B 69.4 /
+S 10.4, which replicated across jobs 400 and 405 and never depended on the seam placement).
+
+**Void, already replaced:** job 430's throughput (token inequality, 1734 vs 1768, and blocked on the
+missing checkpoint regardless) and job 445 (unpropagated `h`; replaced by job 450).
+
 ## BLOCKED — cannot be measured on this box as it stands
 
 **Paired per-token NLL is not runnable here.** `tools/paired_nll.py` consumes
