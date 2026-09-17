@@ -43,21 +43,21 @@ Last reviewed 2026-09-17.
 
 ## OPEN — not yet measured, ranked by expected value
 
-1. **The prefill reserve is buying the decode arena — shrink `DSV41_PREFILL_CHUNK` instead.**
-   Job 495 measured the shipped config auto-sizing to **4760 slots = 68.8 GB** and never dipping
-   below **16.1 GiB** MemAvailable across a 13.2k prefill plus decode. 68.8 GB is the 68 GB rung of
-   the capacity curve (`sweep-arena.log`: 56.8→3.71, 68.0→4.89, 79.0→6.00, 82.1→6.26 tok/s), so we
-   are serving roughly a fifth below the arena we thought we had. The cause is one term in the
-   auto-sizer (`engine/v41_engine.py:450`): `MAX_CHUNK * 5e6`, which is **20.5 GB at the default
-   chunk 4096**, held for the life of the process to serve a phase that runs seconds per request.
-   The reservation is honest — job 495 saw the first chunk cost 16.4 GiB — but it is chunk-linear
-   at ~4.3 MB/token. Predicted arenas at budget 110, reserve 9.0, keep_free 12: **4096 → 68.5 GB,
-   2048 → 78.8 GB, 1024 → 83.9 GB**. `sweep-prefill-chunk.log` held the arena fixed at 82.6 GB
-   across 1024…8192 and found TTFT flat (8.17 s vs 8.01 s), which isolates chunk's own cost
-   cleanly — but on a SHORT prompt, where 1024 is one chunk. Thirteen chunks at 13.2k is what is
-   untested. Commit `ef53db0` saw half of this ("the chunk-4096 win mostly evaporates") and `.env`
-   was never changed. **Queued as job 500.** This is the cheap form of idea 2 and must be measured
-   first: if it lands, the elastic arena buys little on top of it.
+1. **Does a long prefill wipe the decode working set?** The live question, and it came out of a
+   contradiction. Job 500 grew the arena 68.7 → 79.0 → 83.6 GB (+22 %, +1035 slots) and decode moved
+   4.04 → 3.92 → 3.99 steps/s — flat. `sweep-arena.log`, same box, same range, says +28 %
+   (68.0 → 4.89 tok/s, 82.1 → 6.26). The one difference: sweep-arena decoded after a
+   **three-sentence prompt**, job 500 after **13,200 tokens**. Mechanism that would explain it:
+   decode routes 6 of 384 experts per layer, prefill routes essentially all of them, so if prefill
+   loads through the same LRU then 13.2k tokens overwrite the arena with prefill-ordered content —
+   and a bigger arena is no better, because prefill fills all of it just as indiscriminately.
+   Capacity would then convert only for short prompts, which is not how this model is served.
+   **Job 505** holds arena and chunk at the shipped values and varies only prompt length, reporting
+   `hits`/`misses`/`bytes_read`/`load_wait_s` per 50-step window so the recovery trajectory is
+   visible. If the answer is "persistently low", the lever is routing prefill misses through a
+   bounded transient region instead of the whole arena — an engine change, not a flag.
+   **Until 505 reports, do not quote the capacity curve**: it is scoped to decode after a short
+   prompt, and that scope was never written down.
 2. **Elastic arena — small during prefill, large during decode.** The literal version of idea 1.
    Cannot be done by resizing what we have: the arena is **twelve separate slot-major tensors**
    (`tools/cb3_moe.py:50`), torch cannot free part of a tensor, and the decode CUDA graphs bake the
@@ -70,9 +70,10 @@ Last reviewed 2026-09-17.
    must be re-read from NVMe before decode benefits again, at the warm-start rate of ~5.5 GB/s
    (job 485: 83.7 GB in 15 s). Handing back the full ~19 GiB prefill peak and refilling costs
    ~3.5 s per prefill→decode transition — about 4 % of a 512-token reply at 6.6 tok/s — to buy a
-   rung of the capacity curve worth more than that. So it is plausibly net positive, but only for
-   whatever idea 1 does **not** already recover for free. Not started; no engine work until job 500
-   reports.
+   rung of the capacity curve worth more than that. **Gated on idea 1**: job 500 found capacity did
+   not convert at all after a 13.2k prefill, so the premise of this idea — that more arena during
+   decode is worth paying for — is itself unproven under the prompts we serve. No engine work until
+   job 505 reports.
 
 3. **Co-activation-ordered file layout.** Largest non-pruning number in the field: reads/token
    1418 → 775 → ~370 (2.23× cold decode I/O, llama.cpp #18758); 36× fewer page faults from
@@ -251,6 +252,25 @@ bitwise-identical switches only.
 
 ## CLOSED — measured and refuted, mechanism understood
 
+
+**Shrinking `DSV41_PREFILL_CHUNK` to buy decode arena** — job 500, 2026-09-17. The sizer term
+`MAX_CHUNK * 5e6` (`engine/v41_engine.py:450`) really does cost 20.5 GB of arena at the default
+chunk 4096, and shrinking the chunk really does recover it — predicted 68.5 / 78.8 / 83.9 GB,
+measured **68.7 / 79.0 / 83.6**, right to 0.4 %. The trade is simply bad in both directions:
+
+| chunk | arena | 13.2k prefill | decode | MemAvailable floor |
+|---|---|---|---|---|
+| 4096 (shipped) | 68.7 GB | 92.5 s (143 tok/s) | 4.04 steps/s | 16.2 GiB |
+| 2048 | 79.0 GB | 104.8 s (+13 %) | 3.92 steps/s | **10.0 GiB** |
+| 1024 | 83.6 GB | 142.2 s (+54 %) | 3.99 steps/s | **9.9 GiB** |
+
+Both smaller chunks sink the floor under `KEEP_FREE_GB=12`, so they are rejected on safety before
+any speed reading. Prefill degrades monotonically — the cost `sweep-prefill-chunk.log` could not
+see, because at a 512-token prompt chunk 1024 is one chunk and the sweep found TTFT flat. And the
+arena bought nothing: see OPEN 1, which is the part still worth chasing. Note the floor also shows
+the sizer **over-credits** you for shrinking the chunk: it subtracts `keep_free` explicitly, so
+chunk 2048 should still have landed near 12 GiB and landed at 10.0 — prefill has a fixed cost the
+chunk-linear model hands back.
 - **Expert IDENTITY prediction** by co-occurrence, recurrence, or the DSpark drafter. Our entropy
   6.89–7.12 bits over accesses; the predictable mass is already resident (LRU captures the skew, so
   what is left to predict is the flat tail). Now independently confirmed three ways: expert-sniper
