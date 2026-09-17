@@ -126,6 +126,29 @@ in layout to ours (256 B E4M3 + 8 B UE8M0 per-32 = 264 B/row), and their Hyper-C
 F32, matching ours. Also note their published accuracy table baselines against **MXFP4, not BF16**,
 and carries no KL or top-1-agreement figure -- so it is not a quality receipt we can borrow.
 
+### 2026-09-17: the prefill reserve is NOT reclaimable, and ARENA_GB=86 is decode-only
+
+Job 485. At `ARENA_GB=86`, `max_seq=32768`, after load: torch allocated 94.3 GiB, MemAvailable
+18.6 GiB. One 4096-token prefill chunk then drove MemAvailable to **1.3 GB** and the engine's own
+guard fired:
+
+    FATAL: host MemAvailable 1.3 GB stayed below the 2.5 GB floor for 3.0 s
+
+So item 5 of the review plan is a **NO**: `MAX_CHUNK * 5e6 = 20.5 GB` is calibrated about right,
+not slack, and chunk 8192 (41 GB) stays out of reach -- which also removes the one lever that
+coupled the decode memory work to prefill (see `dsv41-enginev2/notes/prefill-in-v2-plan.md`).
+
+**AND IT PUTS A CAVEAT ON THE +10.1 % ARENA RESULT.** That was measured with `bench_tokens`, whose
+prompt is three sentences. `ARENA_GB=86` is safe for DECODE-ONLY benchmarking and is NOT safe for
+serving long prompts. The auto-sizer's ~84.5 GB exists because it subtracts this reserve. Do not
+pin ARENA_GB=86 in production on the strength of the decode number.
+
+Method note: the first two runs of 485 were wrong in ways the job hid -- `forward()` asserts
+`T <= MAX_CHUNK` and chunking is the caller's job, and `sys.path` put the v2 worktree (same repo,
+different branch, also has `engine/`) ahead of the spark checkout. Both surfaced only after the
+job stopped doing `python ... | grep`, which makes the exit status GREP's. That pattern has now
+hidden a failure in three separate job scripts (430, 470, 485).
+
 ## NULL — measured, no effect, under stated conditions
 
 | idea | result | condition that could change it |
