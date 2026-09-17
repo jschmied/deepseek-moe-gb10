@@ -43,14 +43,45 @@ Last reviewed 2026-09-17.
 
 ## OPEN — not yet measured, ranked by expected value
 
-1. **Co-activation-ordered file layout.** Largest non-pruning number in the field: reads/token
+1. **The prefill reserve is buying the decode arena — shrink `DSV41_PREFILL_CHUNK` instead.**
+   Job 495 measured the shipped config auto-sizing to **4760 slots = 68.8 GB** and never dipping
+   below **16.1 GiB** MemAvailable across a 13.2k prefill plus decode. 68.8 GB is the 68 GB rung of
+   the capacity curve (`sweep-arena.log`: 56.8→3.71, 68.0→4.89, 79.0→6.00, 82.1→6.26 tok/s), so we
+   are serving roughly a fifth below the arena we thought we had. The cause is one term in the
+   auto-sizer (`engine/v41_engine.py:450`): `MAX_CHUNK * 5e6`, which is **20.5 GB at the default
+   chunk 4096**, held for the life of the process to serve a phase that runs seconds per request.
+   The reservation is honest — job 495 saw the first chunk cost 16.4 GiB — but it is chunk-linear
+   at ~4.3 MB/token. Predicted arenas at budget 110, reserve 9.0, keep_free 12: **4096 → 68.5 GB,
+   2048 → 78.8 GB, 1024 → 83.9 GB**. `sweep-prefill-chunk.log` held the arena fixed at 82.6 GB
+   across 1024…8192 and found TTFT flat (8.17 s vs 8.01 s), which isolates chunk's own cost
+   cleanly — but on a SHORT prompt, where 1024 is one chunk. Thirteen chunks at 13.2k is what is
+   untested. Commit `ef53db0` saw half of this ("the chunk-4096 win mostly evaporates") and `.env`
+   was never changed. **Queued as job 500.** This is the cheap form of idea 2 and must be measured
+   first: if it lands, the elastic arena buys little on top of it.
+2. **Elastic arena — small during prefill, large during decode.** The literal version of idea 1.
+   Cannot be done by resizing what we have: the arena is **twelve separate slot-major tensors**
+   (`tools/cb3_moe.py:50`), torch cannot free part of a tensor, and the decode CUDA graphs bake the
+   base pointers of all twelve (plus `slot_missing`, sized by `arena.slots`,
+   `engine/fastdecode.py:171`), so any reallocation invalidates 40 layers of captures. The
+   mechanism that *would* work is CUDA VMM — `cuMemAddressReserve` once, then `cuMemMap` /
+   `cuMemUnmap` physical pages behind a stable virtual address, which is exactly what PyTorch's
+   `expandable_segments:True` is built on. Graph-baked pointers stay valid because the VA never
+   moves. **The cost is that unmapped pages lose their contents**: every GB handed back to prefill
+   must be re-read from NVMe before decode benefits again, at the warm-start rate of ~5.5 GB/s
+   (job 485: 83.7 GB in 15 s). Handing back the full ~19 GiB prefill peak and refilling costs
+   ~3.5 s per prefill→decode transition — about 4 % of a 512-token reply at 6.6 tok/s — to buy a
+   rung of the capacity curve worth more than that. So it is plausibly net positive, but only for
+   whatever idea 1 does **not** already recover for free. Not started; no engine work until job 500
+   reports.
+
+3. **Co-activation-ordered file layout.** Largest non-pruning number in the field: reads/token
    1418 → 775 → ~370 (2.23× cold decode I/O, llama.cpp #18758); 36× fewer page faults from
    expert-contiguous layout (#27149). For us the mechanism differs — our reads are already single
    contiguous 13.77 MB O_DIRECT extents, so there are no page faults to save — but if co-activated
    experts were ADJACENT on disk, the ~2 misses per layer could merge into one larger read.
    **Distinct from the CLOSED "read coalescing"**, which was about merging the 6 planes *within*
    one expert (already done, 6→2, overread 0.06 %).
-2. **Cross-layer gate.** Run layer L+1's *existing* router on layer L's residual. Computes the real
+4. **Cross-layer gate.** Run layer L+1's *existing* router on layer L's residual. Computes the real
    router on a stale input; it infers nothing from routing statistics, so **our entropy result does
    not bear on it** — that is the one thing separating it from everything in CLOSED below.
    Evidence: 97 % accuracy / 4.1× decode at 60–64 experts (arXiv 2502.12224); HOBBIT ~90 % at two
@@ -58,44 +89,44 @@ Last reviewed 2026-09-17.
    throughput gain** (colibri #200 — because their cache held 2 experts per layer; we have the
    opposite problem). Nobody has measured it at 384. **Testable offline against traces we already
    have, before any engine work.**
-3. **Fused decode attention** (`DSV41_FUSED_ATTN=1`). In-tree, defaults OFF. Targets `graph A` =
+5. **Fused decode attention** (`DSV41_FUSED_ATTN=1`). In-tree, defaults OFF. Targets `graph A` =
    46.1 ms/step = 37 % of device time, which **can never be overlapped** (A(L) must finish before
    layer L's expert ids exist). No scheduler change reaches it; only a faster kernel does.
    Job 430 runs the paired-NLL verdict. Not bitwise, so quality gates it.
-4. **Mixed-precision miss path (HOBBIT's mechanism).** Second lower-bit copy per expert; on a miss
+6. **Mixed-precision miss path (HOBBIT's mechanism).** Second lower-bit copy per expert; on a miss
    whose router weight is low, read the small record. Bytes come straight off the critical path.
    HOBBIT attributes 1.19–1.57× to dynamic precision alone vs ~1.05× to prefetching, ≤1 % accuracy
    cost, gated by an importance proxy correlating 0.99 with true output magnitude. Scales with our
    13.77 MB record size. Not a global quant change — a selective miss tier.
-5. **AdapMoE adaptive gating.** ~25 % fewer experts activated per token, no reported accuracy loss,
+7. **AdapMoE adaptive gating.** ~25 % fewer experts activated per token, no reported accuracy loss,
    1.35×. Cuts our 19 reads/token directly.
-6. **Least-Stale eviction** (SpecMD). Two priority queues: evict experts from previous forward
+8. **Least-Stale eviction** (SpecMD). Two priority queues: evict experts from previous forward
    passes first, protect current-pass and prefetch-selected, FIFO by layer position within each.
    Collision miss at 5 % capacity 1.6–1.9 % vs LRU 4.5–12.6 %. Cheap drop-in A/B vs age_over_freq.
    Caveat: SpecMD is emulated (A100 with throttled bandwidth), not real storage.
-7. **Overfetch top-(k+δ) with confidence-adaptive δ.** ETH measured 98–99 % hit from
+9. **Overfetch top-(k+δ) with confidence-adaptive δ.** ETH measured 98–99 % hit from
    over-provisioning alone. Fits us specifically because the pipe is idle 44–84 % of the time, so
    the bandwidth is free. Pairs with (2) — alone there is nothing to overfetch, since the current
    layer's top-6 is already exact.
-8. **Engram row layout / IOPS.** 576 preads per step to deliver 76 KB: two reads per row from
+10. **Engram row layout / IOPS.** 576 preads per step to deliver 76 KB: two reads per row from
    widely separated regions (256 B weights at `w_off + r*256`, 8 B scale at `s_off + r*8`), and the
    8-byte read pulls a whole 4 KB page. Row cache is `cache_max = 200_000` (52.8 MB), fill-once, no
    eviction, **and has no hit counter** — so nobody knows whether it works. Counter staged.
    Bound it first: preload every touched row into RAM (45.6 MB over 600 steps) so engram device
    traffic is zero and logits stay identical; if `wait_reads` does not move, the 203 GB interleave
    rewrite is unjustified.
-9. **Saliency-ranked keep-sets.** `gate_weight × output_norm`, not frequency. Upstream's table:
+11. **Saliency-ranked keep-sets.** `gate_weight × output_norm`, not frequency. Upstream's table:
    at 75 % keep 0.440 vs 0.082; at 50 % keep 0.429 vs **0.000**. This matters because our pruning
    closure may rest on the wrong ranking — see RE-OPENED.
-10. **`DSV41_CB3_SCRATCH_SLOTS=384`.** Our records say "unpack scratch 384" SHIPPED, and it is not
+12. **`DSV41_CB3_SCRATCH_SLOTS=384`.** Our records say "unpack scratch 384" SHIPPED, and it is not
     set anywhere; the default is 0. Either the record is wrong or the setting was lost. Job 10
     measured ttft 54.6–55.4 s with 384 vs 58.6 without. **Re-verify and then actually ship it.**
-11. **Device read depth.** Our "4.89 GB/s matches the bare device" rests on a TWO-POINT ladder
+13. **Device read depth.** Our "4.89 GB/s matches the bare device" rests on a TWO-POINT ladder
     (1 and 2 readers), which cannot see a knee further out. A contended sweep gave 3.19/3.78/5.05/
     4.76/4.78/4.87 across depths 1–24 — flat from 4. Published Spark figures are 11.1 GB/s, but for
     the **internal 4 TB** variant; this box is `ESL01TBTLCZ` on a 916 GB partition, a different
     part. Job 425 sweeps depth cleanly and records the drive.
-12. **Concurrency.** More requests in flight means more misses per layer, raising read depth with
+14. **Concurrency.** More requests in flight means more misses per layer, raising read depth with
     no prediction at all. The one lever the entropy result does not touch. Changes the product
     (batch serving), so it is a product decision, not just an engine one.
 
@@ -111,12 +142,12 @@ Checked against ours, and **we diverge on two of the four, not three** -- our `_
 shared expert is FP8 and already agrees with them. (A research summary claimed we CB3 it; we do not.
 The CB3 arena holds routed experts only.)
 
-13. **FP4 on the attention path.** OPEN. They had attention at MXFP8 and went to 4 bits on ZERO
+15. **FP4 on the attention path.** OPEN. They had attention at MXFP8 and went to 4 bits on ZERO
     attention tensors on this architecture; we FP4 `wq_a/wq_b/wkv/wo_b` plus `wo_a`. `wo_a` is
     `[8192,4096]` inside a low-rank `o_lora_rank: 1024` split, so its error is not averaged away by
     a wide reduction. Never measured. Job 435 runs paired NLL, FP8 vs FP4, with the temperature
     sweep, and reports what the FP8 arm costs in arena slots so the trade is explicit.
-14. **LM head at BF16 instead of FP8.** OPEN, low priority. They exclude `head` and ship BF16
+16. **LM head at BF16 instead of FP8.** OPEN, low priority. They exclude `head` and ship BF16
     `[129280,5120]`; we use `DSV41_HEAD_FMT=fp8`. Our own `lm-head-precision-and-humming-012` note
     already cleared head activation precision as a loss source, so this is a cheap alignment rather
     than a suspected defect. Costs ~1.3 GB.
