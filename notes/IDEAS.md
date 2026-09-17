@@ -71,14 +71,26 @@ Last reviewed 2026-09-17.
    nothing to predict (you need it all), nothing to evict, no per-miss wait, no host resolve, and
    layer L+1's read double-buffers against layer L's compute with no dependency to respect.
 
-   **Prerequisite, already queued as job 525**: what bandwidth does the SHIPPED layer-major path
-   actually achieve? If it is already near 6 GB/s the extra 30-46 % is a straight loss and this
-   closes; if it is near 2.76 GB/s the stalls are the prize and this is the way to take them.
+   **MEASURED 2026-09-17 (job 525 arm 1), and it moves the price against this idea.** The route
+   traces above do not know what is already resident. On the SHIPPED path -- `eng.generate()`,
+   `DSV41_LAYER_MAJOR=1`, real text, 13.2k tokens -- prefill issues **7,351 reads = 184 per layer
+   of 384**, with 49,840 LRU hits supplying the rest. So streaming all 384 is **101.3 GB ->
+   211.6 GB, 2.1x the bytes**, not +46 %. It pays only if the stalls cost more than double.
+   Still open because the bandwidth half was NOT obtained: that run reported `ttft_s` as `nan`
+   (wrong stats key), so there is no prefill/decode time split and no achieved GB/s. One-line fix
+   whenever it is worth a run; until then neither direction is settled.
    A later refinement, not a first step: merge the union's gaps into a few large ranges instead of
    the whole 5.29 GB, recovering most of the bytes at ~68 % density.
 
-2. **Does a long prefill wipe the decode working set?** The live question, and it came out of a
-   contradiction. Job 500 grew the arena 68.7 → 79.0 → 83.6 GB (+22 %, +1035 slots) and decode moved
+2. **Does a long prefill wipe the decode working set?** **SCOPE WARNING: every measurement below is
+   on the CHUNK-MAJOR prefill path, which production does not run.** Jobs 495/500/505/510/515 all
+   hand-rolled `for s in range(0, P, MAX_CHUNK): m.forward(..., prefill=True)`, the `else` branch at
+   `engine/v41_engine.py:877`. The server takes `encoder_prefill_layer_major` --
+   `DSV41_SWA_REPLAY` and `DSV41_LAYER_MAJOR` both default to "1" and neither is in `.env`. On the
+   real path the same prompt costs **184 misses per layer**, against 448 (job 510) and 919
+   (job 515) off-path. Re-measure before drawing anything from the numbers that follow.
+
+   The question came out of a contradiction. Job 500 grew the arena 68.7 → 79.0 → 83.6 GB (+22 %, +1035 slots) and decode moved
    4.04 → 3.92 → 3.99 steps/s — flat. `sweep-arena.log`, same box, same range, says +28 %
    (68.0 → 4.89 tok/s, 82.1 → 6.26). The one difference: sweep-arena decoded after a
    **three-sentence prompt**, job 500 after **13,200 tokens**. Mechanism that would explain it:
@@ -287,7 +299,9 @@ bitwise-identical switches only.
 ## CLOSED — measured and refuted, mechanism understood
 
 
-**Shrinking `DSV41_PREFILL_CHUNK` to buy decode arena** — job 500, 2026-09-17. The sizer term
+**Shrinking `DSV41_PREFILL_CHUNK` to buy decode arena** — job 500, 2026-09-17. **The decode and
+MemAvailable columns stand; the prefill column was measured on the CHUNK-MAJOR path the server
+does not use (see OPEN 2), so treat those wall times as an upper bound, not as TTFT.** The sizer term
 `MAX_CHUNK * 5e6` (`engine/v41_engine.py:450`) really does cost 20.5 GB of arena at the default
 chunk 4096, and shrinking the chunk really does recover it — predicted 68.5 / 78.8 / 83.9 GB,
 measured **68.7 / 79.0 / 83.6**, right to 0.4 %. The trade is simply bad in both directions:
