@@ -138,6 +138,37 @@ and carries no KL or top-1-agreement figure -- so it is not a quality receipt we
 | Per-layer arena allocation | ~1 point (ds-05) | — |
 | CPU core pinning | +0.029 % against 0.751 % drift, sign flipped | — |
 
+## BLOCKED — cannot be measured on this box as it stands
+
+**Paired per-token NLL is not runnable here.** `tools/paired_nll.py` consumes
+`state/after_layer39.pt` from `tools/expert_trace.py`, and expert_trace needs the FULL 48-shard
+checkpoint (`model-000NN-of-00048.safetensors`). This box has only `~/dsv41-lean` (6.5 GB: dense
+shards; the routed experts live in the CB3 cache file), and 198 GB free against a ~476 GB
+checkpoint. Job 430 died on exactly this — `FileNotFoundError: .../model-00003-of-00048.safetensors`
+— and job 435 was withdrawn before it could fail the same way.
+
+This is why "fused attention + gather fusion still need a paired-NLL verdict" has stayed open. It
+is **blocked on a download, not on neglect**, and every quality question below inherits the block:
+
+- **`DSV41_FUSED_ATTN=1`** — not bitwise, so it needs a quality verdict. Job 430's throughput arms
+  ran anyway and are NOT a valid comparison: the fused arm emitted **1734 tokens against 1768**, a
+  different token stream, so 6.78 vs 6.56 compares two different computations. The job header said
+  token equality gates it and the script did not enforce it. **Void; do not quote those numbers.**
+- **FP4 on the attention path** (item 13) — same gate, same block.
+- Any future non-bitwise kernel or precision change.
+
+**The way out, in preference order:**
+1. Build a paired-NLL harness that runs on the LEAN dir through the decode path. The pieces exist:
+   `falsify_shared_first.py` already drives the real fastdecode graphs from the lean dir, and
+   `RealLeaves` already has a teacher-forced `next_block` mode. What is missing is scoring
+   teacher-forced next-token NLL through fastdecode rather than through `model.py`'s eager path —
+   and it MUST be the fastdecode path, because `FUSED_ATTN` lives in `fastdecode._attention` and an
+   eager-path measurement would not exercise it at all.
+2. Fetch the full checkpoint (~476 GB; does not fit in 198 GB free without removing something).
+
+Until one of those lands, **no non-bitwise change can be shipped**, and the ship rule stands:
+bitwise-identical switches only.
+
 ## CLOSED — measured and refuted, mechanism understood
 
 - **Expert IDENTITY prediction** by co-occurrence, recurrence, or the DSpark drafter. Our entropy
