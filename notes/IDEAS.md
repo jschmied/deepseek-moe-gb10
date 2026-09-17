@@ -99,6 +99,33 @@ Last reviewed 2026-09-17.
     no prediction at all. The one lever the entropy result does not touch. Changes the product
     (batch serving), so it is a product decision, not just an engine one.
 
+### Added 2026-09-17 from the NVIDIA NVFP4 quant-map comparison
+
+`nvidia/DeepSeek-V4.1-Flash-NVFP4` quantises ONLY the routed experts (NVFP4 W4A4, group 16, two-level
+E4M3-per-16 + F32-per-tensor). Its exclude list, verbatim from `hf_quant_config.json`:
+
+    "exclude_modules": ["*.attn.*", "*.ffn.shared_experts.*", "head", "mtp.*"]
+
+Checked against ours, and **we diverge on two of the four, not three** -- our `_FP4_GROUP_OF` puts
+`ffn.shared_experts.*` in a `shared` group that `DSV41_DENSE_FP4=attn,wo_a` does NOT enable, so our
+shared expert is FP8 and already agrees with them. (A research summary claimed we CB3 it; we do not.
+The CB3 arena holds routed experts only.)
+
+13. **FP4 on the attention path.** OPEN. They had attention at MXFP8 and went to 4 bits on ZERO
+    attention tensors on this architecture; we FP4 `wq_a/wq_b/wkv/wo_b` plus `wo_a`. `wo_a` is
+    `[8192,4096]` inside a low-rank `o_lora_rank: 1024` split, so its error is not averaged away by
+    a wide reduction. Never measured. Job 435 runs paired NLL, FP8 vs FP4, with the temperature
+    sweep, and reports what the FP8 arm costs in arena slots so the trade is explicit.
+14. **LM head at BF16 instead of FP8.** OPEN, low priority. They exclude `head` and ship BF16
+    `[129280,5120]`; we use `DSV41_HEAD_FMT=fp8`. Our own `lm-head-precision-and-humming-012` note
+    already cleared head activation precision as a loss source, so this is a cheap alignment rather
+    than a suspected defect. Costs ~1.3 GB.
+
+**Two things the comparison VALIDATES, worth not re-litigating:** their engram rows are byte-identical
+in layout to ours (256 B E4M3 + 8 B UE8M0 per-32 = 264 B/row), and their Hyper-Connection tensors are
+F32, matching ours. Also note their published accuracy table baselines against **MXFP4, not BF16**,
+and carries no KL or top-1-agreement figure -- so it is not a quality receipt we can borrow.
+
 ## NULL — measured, no effect, under stated conditions
 
 | idea | result | condition that could change it |
