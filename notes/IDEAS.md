@@ -229,6 +229,32 @@ hidden a failure in three separate job scripts (430, 470, 485).
 
 ## NULL — measured, no effect, under stated conditions
 
+
+**More loader concurrency does not help the oracle** — job 550, 2026-09-17, ARM=oracle HORIZON=4
+WARM=0, two reps each. Job 545 saturated at 2.8 GB/s with the queue full, and the harness ran
+n_workers/staging/read_qd/h2d = 8/8/8/2 while production runs io 48/96, so the ceiling looked like a
+configuration artefact. It is not:
+
+| workers/staging/qd/h2d | steps/s | achieved GB/s | GB read | reads |
+|---|---|---|---|---|
+| 8/8/8/2 | 1.656, 1.633, 1.665 | 2.73-2.83 | 47.3-48.3 | 3640-3708 |
+| 16/16/16/4 | 1.571, 1.577 | 4.69, 4.71 | **89.63** | 6507 |
+| 32/32/24/8 | 1.308, 1.339 | 3.91, 4.00 | **89.63** | 6507 |
+| 48/48/24/8 | 1.272, 1.250 | 3.80, 3.73 | **89.63** | 6507 |
+
+Raw bandwidth rises (2.8 -> 4.7 GB/s) and **steps/s falls monotonically** (1.66 -> 1.57 -> 1.32 ->
+1.26). The reason is in the bytes: above 8 the run reads **89.63 GB against 47.5**, and reads
+*exactly* 6507 every time, for the same 30 steps and the same 338 demand fetches. At 8/8/8/2 only
+~3650 of the oracle's prefetches are ever issued — the backpressure is acting as a filter, and the
+~2850 extra reads the wider configurations perform buy nothing.
+
+**This corrects the reading of job 545.** I wrote that once prediction stops being the constraint
+"something in the read path is". It is not: the read path is not starved, and giving it more
+concurrency makes the step rate worse. h=4 at 8/8/8/2 is at or near a local optimum, and the
+oracle's +63 % over the null arm stands as the prefetch prize.
+
+SCOPE: one trace, 30 steps, WARM=0, transient_slots=8 in this harness. Whether the doubled read
+count is transient-ring recycling at 8 slots is untested.
 | idea | result | condition that could change it |
 |---|---|---|
 | Lock removal (~1080/step) | +0.08 % (job 370) | Measured behind a dominating physical barrier — see RE-OPENED |
