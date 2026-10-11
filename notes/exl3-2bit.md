@@ -83,3 +83,15 @@ Closed or out of reach here: shared-base + low-rank delta (our delta spectrum: N
 (QMoE-style, LittleBit) needs training, lossless entropy coding of trellis codes gains ~nothing.
 Our own frequency-ranked pruning gate: keep 0.44 degenerates, 0.60 passes; REAP's saliency ranking is better than
 frequency (256: +5.5 % mean-saliency vs +14 % balanced on text).
+
+## Expert merging: closed in weight space (`tools/merge_align.py`, `data/merge-align-20261011.json`)
+
+delta_spectrum.py averaged experts without aligning their hidden neurons, which merging methods (MC-SMoE,
+HC-SMoE) do first. Aligned now: Hungarian matching of the 2,304 neurons (w1 row, w3 row, w2 column) for every pair
+of 10 experts (8 hottest + 2 cold) in layers 10 and 30, 90 pairs, FP4 originals.
+
+rel = ||F_a - P F_b||^2 / ||F_a||^2: unaligned median 2.006, **aligned min 1.871 / median 1.948 / max 2.016**.
+Alignment buys ~3 %; the experts stay as far apart as unrelated matrices (2.0). Averaging a pair would cost each
+~0.47 of its norm, against ~0.10 for EXL3 2-bit. Weight-space merging is closed on DS4.1; output-space merging
+(HC-SMoE clusters by expert outputs) would need real activations and is unlikely to rescue weights this
+orthogonal.
