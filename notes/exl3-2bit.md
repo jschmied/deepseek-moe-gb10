@@ -51,3 +51,35 @@ cold vs 3.9 warm). The trace is short.
   K read per tensor.
 - Refinement research (iterative trellis refinement, joint w1/w3/w2): needs real Hessians, so the same
   calibration run; with an identity Hessian LDLQ's tiles are independent and refinement has nothing to trade.
+
+## Fitting the whole model in 128 GB: the field and the budget (2026-10-11)
+
+Budget on the GB10: ~10 GB OS + runtime, ~5 GB KV and activations, non-expert weights ~17 GB at Q8 (MixedQ2's
+card: 169.9 GB total, 152.9 GB experts) or ~9 GB at 4-bit. That leaves **~100 GB for the routed experts**
+(543.6 B weights). Engram (196 B, 203-209 GB at FP8/Q8) stays on NVMe in every option, as it does today.
+
+Field (HF cards, nobody runs it resident on one 128 GB box):
+
+| pack | what | experts | quality stated |
+| --- | --- | --- | --- |
+| vcruz305 SAGE EXL3 1.59 | mixed K1-K6, no pruning | 108.9 GB | KL 0.19 vs FP4, top-1 91.2 % (code 97.9) |
+| vcruz305 SAGE EXL3 3.30 | mixed | 224.9 GB | KL 0.091, top-1 94.0 % |
+| LibertAIDAI REAP | prune, FP4 kept | 272 / 256 / 240 / 192 kept | ppl +4.1 % / +5.5 % / +7.1 % / +14.7 % |
+| tacos4me Prune-2xRTX6K | 224 kept, FP4 | ~130 GB | GSM8K 198/200, GPQA-D 92.9 % (keep set overlaps eval) |
+| apetersson MixedQ2 GGUF | IQ2_XXS/Q2_K | 152.9 GB (2.25 bpw) | none |
+| antirez Q2 GGUF | IQ2_XXS + Q2_K | streamed on a 128 GB Mac | none |
+
+Combinations that fit ~100 GB of experts:
+
+| option | experts kept | bits/weight needed | expected loss |
+| --- | --- | --- | --- |
+| A mixed EXL3, no pruning | 384 | 1.47 | a bit past SAGE 1.59 (KL ~0.2) |
+| B REAP 272 + mixed EXL3 | 272 (0.71) | 2.08 | ppl +4 % from pruning + ~2-bit error |
+| C REAP 256 + mixed EXL3 | 256 (0.67) | 2.2 | ppl +5.5 % + error a bit below B's |
+| D REAP 224 + EXL3 | 224 (0.58) | 2.5 | larger pruning loss, smaller quant loss |
+| (today's direction) stream, 2-bit EXL3 | 384 | 2.0 | no pruning loss; ~14 tok/s, not resident |
+
+Closed or out of reach here: shared-base + low-rank delta (our delta spectrum: NO SAVING on DS4.1), sub-1-bit
+(QMoE-style, LittleBit) needs training, lossless entropy coding of trellis codes gains ~nothing.
+Our own frequency-ranked pruning gate: keep 0.44 degenerates, 0.60 passes; REAP's saliency ranking is better than
+frequency (256: +5.5 % mean-saliency vs +14 % balanced on text).
